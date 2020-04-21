@@ -1,0 +1,448 @@
+---
+title: "Creating location plots"
+output: html_notebook
+---
+
+The following code is for generating the plots showing locations of mutations across the genome in multiple samples, and for the analysis of mutation clustering across genotypes.
+
+Libraries
+```{r}
+library(VariantAnnotation)
+source('useful_functions.R')
+source('plotting_functions.R')
+```
+
+Read sample annotation
+```{r}
+data <- read.csv("Sample_annotation_table.csv")
+data$Sample <- as.character(data$Sample)
+data$Genotype.new <- as.character(data$Genotype.new)
+data$Code <- as.character(data$Code)
+CD2Mutant <- sapply(data$Code, function(x) {
+  t <- unlist(strsplit(x,split="[:]"))
+  t[t=="NA"] <- ""
+  return(paste(t[3],t[7],sep=":")) # genotype, experiment type, generation
+}) # short notations
+names(CD2Mutant) <- data$Sample
+```
+
+Read the VCF lists with base substitutions, indels and SVs
+```{r}
+# Upload indels
+load('nb5/WORM_FILTERING/Indels_after_deduplication_with_special_treatment_for_MA_worms_FULL.RData')
+# Upload subs
+load('nb5/WORM_FILTERING/Substitutions_after_deduplication_with_special_treatment_for_MA_worms_FULL.RData')
+# Upload SVs
+load('nb5/WORM_FILTERING/SV_filtering_DELLY_most_recent.RData')
+```
+
+Select only intrachromosomal SVs and merge clusters of SVs
+```{r}
+svmat <- do.call('rbind',SVclust.new)
+svmat <- svmat[as.character(svmat$CHR1) == as.character(svmat$CHR2),]
+svmat$CHR1 <- as.character(svmat$CHR1);svmat$CHR2 <- as.character(svmat$CHR2);svmat$Sample <- as.character(svmat$Sample)
+svmat.new <- svmat[,c(1:4,12:13)]
+svmat <- svmat[svmat$clust.type != 'some',]
+for (w in unique(svmat$Sample)) {
+  tmp <- svmat[svmat$Sample == w,]
+  tmp1 <- tmp[,c(1:4,12:13)]
+  for (j in unique(tmp$clust)) {
+    clust.tmp <- tmp[tmp$clust == j,]
+    tmp1 <- rbind(tmp1,
+                  c(as.character(clust.tmp$CHR1[1]), min(as.numeric(clust.tmp$POS1)), 
+                    as.character(clust.tmp$CHR2[1]), max(as.numeric(clust.tmp$POS2)),
+                    clust.tmp$Sample[1], clust.tmp$clust.type[1]))
+  }
+  tmp1 <- tmp1[-c(1:nrow(tmp)),,drop = F]
+  svmat.new <- svmat.new[-which(svmat.new$Sample == w),]
+  svmat.new <- rbind(svmat.new, tmp1)
+  print(w)
+}
+svmat.new$POS1 <- as.numeric(svmat.new$POS1)
+svmat.new$POS2 <- as.numeric(svmat.new$POS2)
+svmat <- svmat.new
+```
+
+Prepare the genome data
+```{r}
+chr_lens <- c(15072434,15279421,13783801,17493829,20924180,17718942)
+names(chr_lens) <- c('I','II','III','IV','V','X')
+df <- data.frame(name = names(chr_lens), length = chr_lens)
+```
+
+Function to check clustering the genome. We assessed it using the start points of all the base substitutions and indels across the samples of the same genotype and generation.
+
+Clustered status was assigned based on a hidden Markov model which predicts a series of $M$ hidden states $H=\{H_m\}_{m=1}^{M}$, $H_m \in \{\text{clust},\text{not}\}$ (being in a cluster or not) for all mutations within a sample based on the set of distance to the next mutation $D=\{D_m\}_{m=1}^{M-1}$, $D_m \in \mathbb{N}$ (the last mutation in each chromosome is assumed to be fixed in non-clustered state). The probability of a set of states given the observed distances would then be calculated as
+\[P(H_{1:M},D_{1:M})=P(H_1)P(D_1|H_1)\prod_{m=2}^{M-1}P(H_m|H_{m-1})P(D_m|H_m),\]
+where the transition probabilities 
+\[P(H_m=\text{clust}|H_{m-1}=\text{not})=0.001, \]
+\[P(H_m=\text{not}|H_{m-1}=\text{clust})=0.1\]
+and starting probabilities $P(H_1=\text{clust})=0$, $P(H_1=\text{not})=1$.
+The distribution of distances $D$ given the states is assumed to be geometric, with the density of mutations within cluster assumed to be at least one mutation per 100 bases:
+\[ D_m|H_m=\text{clust} \sim \text{Geom}(p=0.01), \]
+\[ D_m|H_m=\text{not} \sim \text{Geom}(p=\frac{1}{\text{mean}(D)}).\]
+We used Viterbi algorithm to infer the most likely set of states for each sample.
+```{r}
+isClustered <- function(vcf, p=1e-3, q=0.1, r=100){
+  d <-  diff(vcf$start)
+  w <- d > 1 & diff(as.numeric(vcf$seqnames)) == 0
+  #	p <- 1e-3 # P N>Kat
+  #	q <- 0.05 # P Kat>N
+  P <- matrix(c(1-p,p,q, 1-q), ncol=2, byrow=TRUE) # Transition probabilities matrix
+  p0 <- c(1,0)
+  s <- c(mean(d[w]), r)
+  dw <- d[w]
+  l <- length(dw)
+  T1 <- T2 <- matrix(0,ncol=l, nrow=2)
+  T1[,1] <- log(c(q/(q+p), p/(q+p))) # log of Vitterbi path probabilities
+  lP <- log(P)
+  dg <- rbind(dgeom(dw, prob=1/s[1], log=TRUE), dgeom(dw, prob=1/s[2], log=TRUE)) 
+  # state observation loglikelihood given the current state (none, kataegis)
+  
+  # Viterbi algorithm
+  
+  for(i in 2:l){
+    x <- ((T1[,i-1] + lP) + dg[,i])
+    T2[1,i] <- (x[1,1] < x[2,1])+1
+    T2[2,i] <- (x[1,2] < x[2,2])+1
+    T1[1,i] <- x[T2[1,i],1]
+    T1[2,i] <- x[T2[2,i],2]
+    #x <- T1[,i-1] + lP + rep(dg[,i],each=2) # previous Vitterbi path probability * transition probability * observation likelihood
+    #T1[,i] <- sapply(1:2, function(state) max(x[,state]))
+    #T2[,i] <- sapply(1:2,function(state) which.max(x[,state])) # most probable states - backpointer
+  }
+  finalT1 <- max(T1[,l] + log(c(q/(q+p), p/(q+p)))) # + probability of transition to final state, let's say 1 and then log(1)=0
+  finalT2 <- which.max(T1[,l] + log(c(q/(q+p), p/(q+p))))# + 
+  z <- numeric(l)
+  z[l] <- finalT2
+  z[l] <- 1 # this means that the backtrace starts from 1 (not necessarily)
+  for(i in l:2){
+    z[i-1] <- T2[z[i],i]
+  }
+  k <- numeric(nrow(vcf))
+  k[-1][w][-1] <- z[-l]-1
+  k[-nrow(vcf)][w][-1] <- (z[-l]-1) | k[-nrow(vcf)][w][-1]
+  
+  # Other clustered
+  pc <- pgeom(dw, prob=1/s[1], lower.tail=TRUE)
+  qc <- p.adjust(pc, "BH") < 0.05
+  
+  cl <- numeric(nrow(vcf))
+  cl[-1][w] <- qc
+  cl[-nrow(vcf)][w] <- qc | cl[-nrow(vcf)][w]
+  
+  clk <- factor(pmin(cl + 2*k,2), levels=0:2, labels=c("None","Clustered","Kataegis"))
+  return(clk)
+}
+```
+
+Pretty names for genotypes
+```{r}
+print_names <- c('N2','agt-2','apn-1','exo-3',
+                 'ndx-4','parp-1','parp-2','tdpo-1',
+                 'ung-1','xpa-1','xpf-1','xpg-1',
+                 'xpc-1','csb-1','polh-1 (ok3317)',
+                 'polh-1 (lf31)','polk-1','rev-1 (gk147834)',
+                 'rev-1 (gk924750)','rev-3','fcd-2',
+                 'fnci-1','fncm-1','helq-1','dog-1',
+                 'fan-1','cku-80','lig-4','polq-1',
+                 'brc-1 brd-1','rip-1','smc-5','smc-6',
+                 'slx-1','mus-81','smg-1','rcq-5',
+                 'wrn-1','rtel-1','dna-2','bub-3 (gt2000)',
+                 'bub-3 (ok3437)','san-1','atm-1','cep-1',
+                 'ced-3','ced-4','brc-1 brd-1; ced-3',
+                 'brc-1 brd-1; cep-1','him-6','him-6 ced-3',
+                 'him-6; ced-4','him-6; cep-1','brd-1',
+                 'gen-1','lem-3','mlh-1','pms-2',
+                 'pole-4','pole-4; pms-2','rfs-1','rif-1')
+
+names(print_names) <- c(sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[1:7],
+                        "tdp-1",
+                        sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[9:15],
+                        "polh(lf31)-1",'polk-1',
+                        'rev(gk147834)-1',
+                        sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[19:29],
+                        "brc-1",
+                        sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[31:40],
+                        "bub(gt2000)-3","bub(ok3437)-3",
+                        sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[43:47],
+                        "brc-1,ced-3","brc-1,cep-1",
+                        "him-6","him-6,ced-3","him-6,ced-4","him-6,cep-1",
+                        sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[54:59],
+                        "pole-4,pms-2",sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[61:62])
+
+```
+
+Checking if a variant is an MNV
+```{r}
+isMNV <- function(vcf) {
+  d <- diff(start(vcf)) == 1 & abs(diff(geno(vcf)$PM[,"TUMOUR"] )) <= 0.05
+  w <- c(FALSE, d) | c(d, FALSE)
+  return(w)
+}
+```
+
+*Location plots*
+
+Start generating images
+```{r}
+huge_tot <- list()  
+totcount <- 1
+q <- list()
+j <- 1
+clrs <- c("#2EBAED","#000000","#DE1C14","#D4D2D2","#ADCC54","#F0D0CE","brown","#8DD3C7","#FFFFB3","#BEBADA")
+names(clrs) <- c('C>A','C>G','C>T','T>A','T>C','T>G','DNV','D','DI','I')
+for (count in 1:length(print_names)) {
+  
+  gntp <- names(print_names)[count]
+  
+  if (names(print_names)[count] == "rad(TG3312)-54B")
+    gntp <- "rad-54B"
+  
+  inds <- which(sapply(names(exps), function(x) unlist(strsplit(x,split = '[:]'))[1]) == gntp)
+  
+  for (samset in exps[inds]) {
+  
+    tot <- list()
+    
+    no.samples <- length(samset)
+    
+    for (n in samset) {
+
+      tmp_vcf <- vcfs_dedup[[n]]
+      if (length(tmp_vcf) > 0) {
+        #mcols(tmp_vcf)$Sample <- n
+        tmp <- isMNV(tmp_vcf)
+        tmp_vcf_df <- as.data.frame(granges(tmp_vcf))
+        tmp_vcf_df$Sample <- n
+        tmp_vcf_df$VAF <- geno(tmp_vcf)[['PM']][,2]
+        tmp_vcf_df$Type <- NA
+        if (sum(tmp)>0) {
+          dnvs <- tmp_vcf_df[tmp,][seq(1,sum(tmp),2),]
+          dnvs$Type <- 'DNV'
+        } else {
+          dnvs <- tmp_vcf_df[tmp,]
+        }
+        subs <- tmp_vcf_df[!tmp,]
+        if (length(subs) >0) {
+          subs <- subs[subs$seqnames!='MtDNA',]
+          subs$Type <- paste0(subs$REF,'>',unlist(sapply(subs$ALT,as.character)))
+          subs$Type[subs$Type == 'A>C'] <- 'T>G'
+          subs$Type[subs$Type == 'A>G'] <- 'T>C'
+          subs$Type[subs$Type == 'A>T'] <- 'T>A'
+          subs$Type[subs$Type == 'G>A'] <- 'C>T'
+          subs$Type[subs$Type == 'G>C'] <- 'C>G'
+          subs$Type[subs$Type == 'G>T'] <- 'C>A'
+        }
+      } else {
+        subs <- tmp_vcf_df
+        dnvs <- tmp_vcf_df
+      }
+  
+      vcf <- indels_dedup[[n]]
+      indels <- as.data.frame(granges(vcf))
+      if (nrow(indels) > 0) {
+        indels <- indels[indels$seqnames!='MtDNA',]
+        indels$Sample <- n
+        indels$VAF <- (geno(vcf)$PU[,"TUMOUR"] + geno(vcf)$NU[,"TUMOUR"]) / 
+          (geno(vcf)$PR[,"TUMOUR"] + geno(vcf)$NR[,"TUMOUR"]) 
+        indels$Type <- ifelse(nchar(indels$REF) > nchar(unlist(sapply(indels$ALT,as.character))), yes = 'D', no = 'I')
+        indels$Type[nchar(indels$REF) > 1 & nchar(unlist(sapply(indels$ALT,as.character))) > 1] <- 'DI'
+      }
+  
+      if (nrow(subs) > 0) {
+        if (nrow(indels) > 0) {
+          if (nrow(dnvs) >0) tot[[n]] <- rbind(subs,indels,dnvs)
+          else tot[[n]] <- rbind(subs,indels)
+        } else {
+          if (nrow(dnvs) >0) tot[[n]] <- rbind(subs,dnvs)
+          else tot[[n]] <- subs
+        }
+      } else {
+        if (nrow(indels) > 0) {
+          if (nrow(dnvs) >0) tot[[n]] <- rbind(indels,dnvs)
+          else tot[[n]] <- indels
+        } else {
+          if (nrow(dnvs) >0) tot[[n]] <- rbind(dnvs)
+          else tot[[n]] <- NULL
+        }
+      }
+
+      if (length(tot[[n]])>0) {
+        tot[[n]]$Mode <- NA
+        tot[[n]]$experiment <- CD2Mutant[n]
+        if (nrow(subs)>0) 
+          tot[[n]]$Mode[1:nrow(subs)] <- 'A'
+        if (nrow(indels) >0)
+          tot[[n]]$Mode[(nrow(subs)+1):(nrow(subs) + nrow(indels))] <- 'B'
+        if (nrow(dnvs)>0)
+          tot[[n]]$Mode[(nrow(subs)+nrow(indels)+1):nrow(tot[[n]])] <- 'C'
+        rownames(tot[[n]]) <- NULL
+        tot[[n]] <- tot[[n]][order(tot[[n]]$seqnames),]
+        for (ch in levels(tot[[n]]$seqnames)) {
+          tot[[n]][tot[[n]]$seqnames == ch,] <- tot[[n]][tot[[n]]$seqnames == ch,][order(tot[[n]]$start[tot[[n]]$seqnames == ch]),]
+        }
+        if (max(table(tot[[n]]$seqnames)) < 3) {
+          tot[[n]]$clust <- 2
+        } else {
+          k <- isClustered(tot[[n]])
+          tot[[n]]$clust <- as.character(k)
+          tot[[n]]$clust[tot[[n]]$clust == 'Kataegis'] <- 5
+          tot[[n]]$clust[tot[[n]]$clust != 5] <- 2
+          for (special_count in 1:nrow(tot[[n]])) {
+            
+          }
+        }
+      }
+    }
+    tot <- do.call('rbind', tot)
+    huge_tot[[totcount]] <- tot
+    totcount <- totcount + 1
+    for (lll in unique(tot$start)) {
+      if (sum(tot$start == lll) == 1) next
+      if (var(tot$VAF[tot$start == lll]) < 0.01 & length(unique(tot$Type[tot$start == lll])) == 1)
+        tot <- tot[-which(tot$start == lll)[-1],]
+    }  
+    
+    if (sum(tot$clust>2)>0)
+      q[[j]] <- ggplot() + geom_bar(data = df, aes(x = name, y = length), stat = 'identity',fill = 'white') +
+        scale_y_continuous(labels = c('0 Mb','5 Mb', '10 Mb','15 Mb','20 Mb')) +
+        geom_jitter(data = tot, aes(x = seqnames, y = start, col = Type, shape =Mode, size = clust)) +
+        labs(title = paste0('Mutations across all samples from ',CD2Mutant[samset[1]], ' experiment, ',
+                          no.samples, ' samples'),
+             x = 'Chromosome',y='Position') +
+        scale_shape_discrete(labels = c('Substitutions','Indels','DNVs')) +
+        scale_size_manual(values = c(2,5), labels = c('single','clustered')) +
+        scale_color_manual(values=clrs[unique(tot$Type)]) +
+      guides(size=guide_legend(title="Clustering"), shape = guide_legend(title='Class')) + 
+        theme(title = element_text(size=10))
+    else
+      q[[j]] <- ggplot() + geom_bar(data = df, aes(x = name, y = length), stat = 'identity',fill = 'white') +
+      scale_y_continuous(labels = c('0 Mb','5 Mb', '10 Mb','15 Mb','20 Mb')) +
+      geom_jitter(data = tot, aes(x = seqnames, y = start, col = Type, shape = Mode), size = 2) +
+      labs(title = paste0('Mutations across all samples from ',CD2Mutant[samset[1]], ' experiment, ',
+                          no.samples, ' samples'),
+           x = 'Chromosome',y='Position') +
+      scale_shape_discrete(labels = c('Substitutions','Indels','DNVs')) +
+      scale_color_manual(values=clrs[unique(tot$Type)]) +
+      guides(shape = guide_legend(title='Class')) + 
+      theme(title = element_text(size=10))
+   
+    
+    COLOR=c("#FBB4AE","#B3CDE3","#CCEBC5","#DECBE4","#FED9A6","#FFFFCC","#E5D8BD")
+    names(COLOR) = c("TD", "DEL", "INV", "COMPLEX", "FOLDBACK", "MOVE", "TRSL")
+    svs <- svmat[as.character(svmat$Sample) %in% samset,]
+    svs$POS1 <- as.numeric(svs$POS1)
+    svs$POS2 <- as.numeric(svs$POS2)
+    svs$CHR1 <- match(svs$CHR1, df$name)
+    svs$clust.type <- factor(svs$clust.type)
+
+    if (nrow(svs)>0) {
+        q[[j]] <- q[[j]] + geom_rect(data = svs,
+                                     mapping = aes(xmin = CHR1-0.5, 
+                                                   xmax = CHR1+0.5, 
+                                                   ymin = POS1, 
+                                                   ymax = POS2+10000,
+                                                   fill = clust.type),
+                                     alpha = 0.4) +
+        scale_fill_manual(values = COLOR) + 
+          guides(fill = guide_legend(title='SV'))
+    }
+  
+    j = j+1
+    print(j)
+  }
+}
+```
+
+Save them all
+```{r}
+GG_save_pdf(q, filename = 'Mutation_accumulation_location_plots.pdf', 8,7)
+```
+
+Generate the barplots of mutation types per sample
+```{r}
+short.Y <- cbind(rowSums(Y[,1:16]),rowSums(Y[,17:32]),rowSums(Y[,33:48]),rowSums(Y[,49:64]),
+                 rowSums(Y[,65:80]),rowSums(Y[,81:96]), rowSums(Y[,97:98]), rowSums(Y[,99:104]),
+                 rowSums(Y[,105:106]), rowSums(Y[,107:112]),rowSums(Y[,113:119]))
+```
+
+BER baplot
+```{r}
+pdf('BER_barplots.pdf',6,5)
+f <- barplot(t(rbind(short.Y[names(CD2Mutant)[CD2Mutant== 'N2:0'],,drop = F],
+                short.Y[names(CD2Mutant)[CD2Mutant== 'N2:20'],],
+                short.Y[names(CD2Mutant)[CD2Mutant== 'N2:40'],],
+                rep(0,11),
+                rep(0,11),
+                short.Y[names(CD2Mutant)[CD2Mutant== 'agt-2:0'],,drop = F],
+                short.Y[names(CD2Mutant)[CD2Mutant== 'agt-2:20'],],
+                rep(0,11),
+                rep(0,11),
+                short.Y[names(CD2Mutant)[CD2Mutant== 'ung-1:0'],,drop = F],
+                short.Y[names(CD2Mutant)[CD2Mutant== 'ung-1:20'],],
+                short.Y[names(CD2Mutant)[CD2Mutant== 'ung-1:40'],])),
+        col = c("#2EBAED","#000000","#DE1C14","#D4D2D2","#ADCC54","#F0D0CE",
+                "brown","#8DD3C7","#FFFFB3","#BEBADA","darkmagenta"),
+        xaxt = 'n', las = 2, border = NA, ylim = c(-2,50))
+lines(x = rep(f[4] + (f[5]-f[4])/2,2), y = c(-2,30))
+lines(x = rep(f[23] + (f[24]-f[23])/2,2), y = c(-2,40))
+lines(x = rep(f[31] + (f[32]-f[31])/2,2), y = c(-2,40))
+lines(x = rep(f[44] + (f[45]-f[44])/2,2), y = c(-2,40))
+lines(x = rep(f[47] + (f[48]-f[47])/2,2), y = c(-2,40))
+legend('topleft', fill = c("#2EBAED","#000000","#DE1C14","#D4D2D2","#ADCC54","#F0D0CE",
+                           "brown","#8DD3C7","#FFFFB3","#BEBADA","darkmagenta"),ncol = 2,
+       legend = c('C>A','C>G','C>T','T>A','T>C','T>G','MNV', 
+                  'Del', 'Del/Ins', 'Ins', 'SV'), border = NA, bty = 'n', cex = 0.8)
+dev.off()
+```
+
+BRCA
+```{r}
+pdf('brca_barplots.pdf',10,6)
+f <- barplot(t(rbind(short.Y[names(CD2Mutant)[CD2Mutant== 'ced-3:1'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'ced-3:20'],],
+                     rep(NA,11),
+                     rep(NA,11),
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'cep-1:0'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'cep-1:1'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'cep-1:20'],],
+                     rep(NA,11),
+                     rep(NA,11),
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1:0'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1:1'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1:20'],],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1:40'],],
+                     rep(NA,11),
+                     rep(NA,11),
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,ced-3:0'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,ced-3:1'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,ced-3:20'],],
+                     rep(NA,11),
+                     rep(NA,11),
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,cep-1:10'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,cep-1:20'],])), 
+             col = c("#2EBAED","#000000","#DE1C14","#D4D2D2","#ADCC54","#F0D0CE",
+                     "brown","#8DD3C7","#FFFFB3","#BEBADA","darkmagenta"),
+             xaxt = 'n', las = 2, border = NA, ylim = c(-1,60))
+lines(x = rep(f[3] + (f[4]-f[3])/2,2), y = c(-1,10), lwd =2)
+lines(x = rep(f[14] + (f[15]-f[14])/2,2), y = c(-1,10), lwd =2)
+lines(x = rep(f[16] + (f[17]-f[16])/2,2), y = c(-1,10), lwd =2)
+lines(x = rep(f[25] + (f[26]-f[25])/2,2), y = c(-1,10), lwd =2)
+lines(x = rep(f[27] + (f[28]-f[27])/2,2), y = c(-1,20), lwd =2)
+lines(x = rep(f[34] + (f[35]-f[34])/2,2), y = c(-1,40), lwd =2)
+lines(x = rep(f[45] + (f[46]-f[45])/2,2), y = c(-1,20), lwd =2)
+legend('topleft', fill = c("#2EBAED","#000000","#DE1C14","#D4D2D2","#ADCC54","#F0D0CE",
+                           "brown","#8DD3C7","#FFFFB3","#BEBADA","darkmagenta"),ncol = 2,
+       legend = c('C>A','C>G','C>T','T>A','T>C','T>G','MNV', 
+                  'Del', 'Del/Ins', 'Ins', 'SV'), border = NA, bty = 'n')
+dev.off()
+```
+
+*Clustering analysis*
+
+```{r}
+
+```
+
+

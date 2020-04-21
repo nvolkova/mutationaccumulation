@@ -195,6 +195,9 @@ GG_save_pdf = function(list, filename, ...) {
   invisible(NULL)
 }
 
+
+
+
 dnv.types.full <- c(paste0(rep('AC',9),'>',unlist(lapply(c('C','G','T'), function(x) paste0(rep(x,3),c('A','G','T'))))),
                     paste0(rep('AT',6),'>',c('CA','CC','CG','GA','GC','TA')),
                     paste0(rep('CC',9),'>',unlist(lapply(c('A','G','T'), function(x) paste0(rep(x,3),c('A','G','T'))))),
@@ -206,7 +209,13 @@ dnv.types.full <- c(paste0(rep('AC',9),'>',unlist(lapply(c('C','G','T'), functio
                     paste0(rep('TG',9),'>',unlist(lapply(c('A','C','G'), function(x) paste0(rep(x,3),c('A','C','T'))))),
                     paste0(rep('TT',9),'>',unlist(lapply(c('A','C','G'), function(x) paste0(rep(x,3),c('A','C','G'))))))
 
-plot_dnv_only <- function(mut_matrix, colors=NA, norm=T, ymax=NA, ytitle = 'Number of mutations') {
+
+
+
+
+plot_dnv_only <- function(mut_matrix, colors=NA, norm=T, ymax=NA, ytitle = 'Number of mutations',
+                          CI = F, low = NA, high = NA, rownames = T, diff_scale = F,diff_limits = NULL, 
+                          size.all = 10, err.bar.size = 0.5) {
   
   DNV <- c('AC','AT','CC','CG','CT','GC','TA','TC','TG','TT')
   
@@ -227,11 +236,16 @@ plot_dnv_only <- function(mut_matrix, colors=NA, norm=T, ymax=NA, ytitle = 'Numb
   }
   
   if (norm) {
+    mult <- colSums(mut_matrix)
     norm_mut_matrix <- apply(mut_matrix, 2, function(x) x/sum(x))
     ytitle <- 'Relative contribution'
   } else norm_mut_matrix <- mut_matrix
   
   if (is.na(ymax)) ymax <- max(norm_mut_matrix)
+  
+  scales <- 'free_x'
+  if (diff_scale)
+    scales <- 'free'
   
   context = dnv.types.full
   substitution = rep(DNV, c(9,6,9,6,9,6,6,9,9,9))
@@ -239,22 +253,54 @@ plot_dnv_only <- function(mut_matrix, colors=NA, norm=T, ymax=NA, ytitle = 'Numb
   df2 = cbind(df, as.data.frame(norm_mut_matrix))
   df3 = melt(df2, id.vars = c("substitution", "context"))
   df3$substitution = factor(df3$substitution, levels=DNV)
+  
+  
+  if (!is.null(diff_limits)) {
+    df3 <- rbind(df3, data.frame(substitution = 'Zfake', context = '0', variable = unique(df3$variable), value = diff_limits))
+  }
+  
+  
   plot = ggplot(data = df3, aes(x = context, y = value, fill = substitution, width = 0.6)) +
-    geom_bar(stat = "identity", colour = "black",size = 0.2) +
-    scale_fill_manual(values = colors) + facet_grid(variable ~ substitution, scales = 'free_x') +
-    ylab(ytitle) + coord_cartesian(ylim = c(0,ymax)) + 
+    geom_bar(stat = "identity", colour = "black",size = NA) +
+    scale_fill_manual(values = colors) + facet_grid(variable ~ substitution, scales = scales) +
+    ylab(ytitle) + 
     guides(fill = FALSE) + theme_bw() +
-    theme(text = element_text(family='ArialMT'),
-          axis.title.y = element_text(size = 12,vjust = 1), 
-          axis.text.y = element_text(size = 8), 
+    theme(axis.title.y = element_text(size = size.all,vjust = 1), 
+          axis.text.y = element_text(size = size.all), 
           axis.title.x = element_blank(), 
-          axis.text.x = element_text(size = 6, angle = 90, vjust = 0.4), 
-          strip.text.x = element_text(size = 12), 
-          strip.text.y = element_text(size = 12), 
+          axis.text.x = element_text(size = size.all/2, angle = 90, vjust = 0.4), 
+          strip.text.x = element_text(size = size.all), 
+          strip.text.y = element_text(size = size.all), 
           panel.grid.major.x = element_blank(), 
           strip.background = element_blank(), 
           panel.border = element_rect(colour="white"),
           panel.spacing = unit(0.1,'lines'))
+  if (!diff_scale) plot <- plot + coord_cartesian(ylim = c(0,ymax), clip='off')
+  if (!rownames) plot <- plot + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+  if (CI) {
+    norm_mut_matrix_lower <- as.matrix(low)
+    norm_mut_matrix_upper <- as.matrix(high)
+    if (norm)
+      for (i in 1:ncol(norm_mut_matrix_lower)) {
+        norm_mut_matrix_lower[,i] = norm_mut_matrix_lower[,i] / mult[colnames(norm_mut_matrix_lower)[i]]
+        norm_mut_matrix_upper[,i] = norm_mut_matrix_upper[,i] / mult[colnames(norm_mut_matrix_upper)[i]]
+      }
+    rownames(norm_mut_matrix_upper) = rownames(norm_mut_matrix_lower) = NULL
+    df_lower = cbind(df,as.data.frame(norm_mut_matrix_lower))
+    df_upper = cbind(df,as.data.frame(norm_mut_matrix_upper))
+    df_lower = melt(df_lower, id.vars = c("substitution", "context"))
+    df_upper = melt(df_upper, id.vars = c("substitution", "context"))
+    if (!is.null(diff_limits)) {
+      df3$value_min = c(df_lower$value, rep(0,ncol(mut_matrix)))
+      df3$value_max = c(df_upper$value, rep(0,ncol(mut_matrix)))
+    } else {
+      df3$value_min = df_lower$value
+      df3$value_max = df_upper$value
+    }
+    plot <- plot + geom_linerange(data=df3, aes(ymin = value_min, ymax = value_max), colour = 'darkgrey', size = err.bar.size)
+  }
+  
   return(plot)
   
 }
@@ -391,7 +437,7 @@ library(reshape2)
 
 plot_fullsig_wb <- function(mut_matrix, colors=NA, norm=T, ymax=NA, ytitle = 'Number of mutations', # signatures for 119 profile, DNV collapsed, indel resolved
                                CI = F, low = NA, high = NA, diff_scale = F, rownames = T, diff_limits = NULL,
-                               significance = NULL, thr = 0.05, size.all = 10, err.bar.size = 0.5)
+                               significance = NULL, thr = 0.05, size.all = 10, err.bar.size = 0.5, yspace = NULL)
 {
   types.full <- paste(rep(rep(c('A','C','G','T'), each = 4), 6), '[',
                       rep(c('C','T'), each = 48), '>', rep(c('A','G','T','A','C','G'), each=16), ']',
@@ -427,6 +473,7 @@ plot_fullsig_wb <- function(mut_matrix, colors=NA, norm=T, ymax=NA, ytitle = 'Nu
   
   
   if (is.na(ymax)) ymax <- max(norm_mut_matrix)
+  if(is.null(yspace)) yspace = 'fixed'
   
   TRIPLETS_96 = rep(TRIPLETS, 6)
   context = c(TRIPLETS_96,'2 bp','over 2 bp',INDELS,SVS)
@@ -460,8 +507,8 @@ plot_fullsig_wb <- function(mut_matrix, colors=NA, norm=T, ymax=NA, ytitle = 'Nu
   }
   
   p = ggplot(data = df3, aes(x = context, y = value, fill = substitution, width = width)) +
-    geom_bar(stat = "identity", colour = "black", size = NA, alpha = df3$significance) +
-    scale_fill_manual(values = c(colors,'white')) + facet_grid(variable ~ substitution, scales = scales) +
+    geom_bar(stat = "identity", colour = "black", size = NA, alpha = df3$significance[order(df3$variable)]) +
+    scale_fill_manual(values = c(colors,'white')) + facet_grid(variable ~ substitution, scales = scales, space = yspace) +
     ylab(ytitle) + 
     guides(fill = FALSE) + theme_bw() +
     theme(axis.title.y = element_text(size = size.all,vjust = 1), 

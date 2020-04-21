@@ -97,6 +97,40 @@ hits_minus <- findOverlaps(query = sv, subject = gc_minus)
 length(unique(c(queryHits(hits_plus),queryHits(hits_minus))))
 # 17 out of 21
 
+
+lapply(indels_dedup[names(CD2Mutant)[CD2Mutant %in% c("N2:1","N2:40","N2:20")]], granges) -> a
+lapply(indels_dedup[names(CD2Mutant)[CD2Mutant %in% c("dog-1:1","dog-1:40","dog-1:20")]], granges) -> b
+lapply(indels_dedup[names(CD2Mutant)[CD2Mutant %in% c("him-6:1","him-6:40","him-6:20")]], granges) -> c
+lapply(indels_dedup[names(CD2Mutant)[CD2Mutant %in% c("atm-1:1","atm-1:40","atm-1:20")]], granges) -> d
+res <- c(sum(sapply(a, function(x) length(unique(c(queryHits(findOverlaps(query = granges(x), subject = gc_plus)),
+                                                      queryHits(findOverlaps(query = granges(x), subject = gc_minus)))))))/ 
+              sum(sapply(a,length)),
+            sum(sapply(b, function(x) length(unique(c(queryHits(findOverlaps(query = granges(x), subject = gc_plus)),
+                                                          queryHits(findOverlaps(query = granges(x), subject = gc_minus)))))))/ 
+              sum(sapply(b,length)),
+            sum(sapply(c, function(x) length(unique(c(queryHits(findOverlaps(query = granges(x), subject = gc_plus)),
+                                                          queryHits(findOverlaps(query = granges(x), subject = gc_minus)))))))/ 
+              sum(sapply(c,length)),
+            sum(sapply(d, function(x) length(unique(c(queryHits(findOverlaps(query = granges(x), subject = gc_plus)),
+                                                          queryHits(findOverlaps(query = granges(x), subject = gc_minus)))))))/ 
+              sum(sapply(d,length)))
+
+plot(res, ylim = c(0,1), pch = 16)
+allmean <- sum(width(c(gc_minus,gc_plus))) / sum(chr_lens)
+allsd <- sqrt(sum(width(c(gc_minus,gc_plus))) / sum(chr_lens) * (1 - sum(width(c(gc_minus,gc_plus))) / sum(chr_lens)))
+for (j in 1:4) {
+  points(x = j, y = allmean, col = 'grey', pch = 16)
+  lines(x = c(j,j), y = c(allmean - 2*allsd, allmean + 2*allsd), col = 'grey', lwd = 1)
+}
+
+for (j in 2:length(a)) {
+  allindels <- c(allindels,a[[j]])
+}
+hits_plus <- findOverlaps(query = granges(allindels), subject = gc_plus)
+hits_minus <- findOverlaps(query = granges(allindels), subject = gc_minus)
+length(unique(c(queryHits(hits_plus),queryHits(hits_minus)))) / length(allindels)
+
+
 #########################
 
 intnames <- names(CD2Mutant)[CD2Mutant == 'dog-1:20']
