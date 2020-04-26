@@ -29,11 +29,11 @@ names(CD2Mutant) <- data$Sample
 Read the VCF lists with base substitutions, indels and SVs
 ```{r}
 # Upload indels
-load('nb5/WORM_FILTERING/Indels_after_deduplication_with_special_treatment_for_MA_worms_FULL.RData')
+load('Indels_after_deduplication_with_special_treatment_for_MA_worms_FULL.RData')
 # Upload subs
-load('nb5/WORM_FILTERING/Substitutions_after_deduplication_with_special_treatment_for_MA_worms_FULL.RData')
+load('Substitutions_after_deduplication_with_special_treatment_for_MA_worms_FULL.RData')
 # Upload SVs
-load('nb5/WORM_FILTERING/SV_filtering_DELLY_most_recent.RData')
+load('SV_filtering_DELLY_most_recent.RData')
 ```
 
 Select only intrachromosomal SVs and merge clusters of SVs
@@ -441,8 +441,197 @@ dev.off()
 
 *Clustering analysis*
 
+Aggregate all clusters
 ```{r}
+allclust <- do.call('rbind',huge_tot)
+allclust <- allclust[allclust$clust>1,]
 
+CD2Mutant.reduced <- sapply(CD2Mutant, function(x) {
+  tmp <- unlist(strsplit(x, split = '[:]'))
+  if (length(tmp) == 2) return(x)
+  else return(paste(tmp[1:3],collapse=':'))
+})
+
+clustdf <- data.frame(name = unique(allclust$Sample))
+clustdf$name <- as.character(clustdf$name)
+clustdf$generation <- data$Generation[match(clustdf$name,data$Sample)]
+clustdf$genotype <- data$Genotype.new[match(clustdf$name,data$Sample)]
+clustdf$exposure <- data$Mutagen[match(clustdf$name,data$Sample)]
+clustdf$dose <- data$Drug.concentration[match(clustdf$name,data$Sample)]
+clustdf$code <- CD2Mutant.reduced[match(clustdf$name,names(CD2Mutant.reduced))]
+
+clustdf$number_of_clusters <- sapply(clustdf$name, function(x) 
+    sum(abs(diff(allclust$start[allclust$Sample == x]))>1000) + 1)
+clustdf$number_clust_muts <- sapply(clustdf$name, function(x) sum(allclust$Sample == x))
+clustdf$total_samples_of_this_code <- sapply(clustdf$code, function(x) sum(CD2Mutant.reduced == x))
+clustdf$total_mutations_in_sample <- sapply(clustdf$name, function(x) sum(Y[x,1:112]))
+```
+
+Model the number of clusters as a Poisson random variable
+```{r}
+clustdf$total_number_of_mutations <- rowSums(Y)[match(clustdf$name, rownames(Y))]
+
+clust <- sapply(rownames(count.data), function(x) {
+  if (x %in% clustdf$name) return(clustdf$number_of_clusters[clustdf$name == x])
+  else return(0)
+})
+
+cd <- count.data[,!(colnames(count.data) %in% c('trt-1','pot-2','mrt-2'))]
+cd <- cd[rowSums(cd)>0,]
+m <- ncol(cd)
+
+sigma <- variable(lower = 0)
+rates <-  lognormal(meanlog = 0, sdlog = sigma, dim = c(1, m))
+mu = (cd %*% t(rates))
+clust <- t(t(clust))
+distribution(clust) = poisson(lambda = mu)
+cl.model <- model(rates,sigma)
+cl.draws <- mcmc(cl.model, warmup = 500, n_samples = 500) # do on cluster
+draws_all <- do.call('rbind',cl.draws)
+rates <- colMeans(draws_all[,1:74])
+rates.sd <- apply(draws_all[,1:74],2,sd)
+names(rates) = names(rates.sd) <- colnames(cd)
+
+rates <- rates[-c(8,9,32:34,73)]
+rates.sd <- rates.sd[-c(8,9,32:34,73)]
+
+pvclust <- NULL
+for (zzz in names(rates)[-1]) {
+  stat_mu = rates[zzz] - rates['N2']
+  stat_sd = sqrt(rates.sd[zzz]**2 + rates.sd['N2']**2)
+  zscore = stat_mu / stat_sd
+  pvclust <- c(pvclust, 1 - pchisq(q = zscore**2, df = 1))
+}
+which(p.adjust(pvclust,method='BH') < 0.05)
+```
+
+Analyze proportions of clustered mutations
+```{r}
+prop.of.clust <- sapply(names(clust), function(x) {
+  if (x %in% clust_summary$name) return(clust_summary$number_clust_muts[clust_summary$name == x] / sum(Y[x,c(1:112)]))
+  else return(0)
+})
+
+#save(cd, clust, prop.of.clust, file = '~/yoda2/IR/IRclust_new.RData')
+
+simplemodel <- glm( prop.of.clust ~ 0 + .,data = cd1, family = gaussian())
+coef(summary(simplemodel))
+which(p.adjust(coef(summary(simplemodel))[,4], method = 'BH')<0.05)
+
+coeffs <- coef(summary(simplemodel))
+
+pvclust <- NULL
+for (zzz in rownames(coeffs)[-1]) {
+  stat_mu = coeffs[zzz,1] - coeffs['N2.Rad',1]
+  stat_sd = sqrt(coeffs[zzz,2]**2 + coeffs['N2.Rad',2]**2)
+  zscore = stat_mu / stat_sd
+  pvclust <- c(pvclust, 1 - pchisq(q = zscore**2, df = 1))
+}
+rownames(coeffs)[-1][which(p.adjust(pvclust,method='BH') < 0.05)]
+```
+
+```{r}
+prop.of.clust <- sapply(rownames(cd), function(x) {
+  if (x %in% clustdf$name) return(clustdf$number_of_clustered_mutations[clustdf$name == x] / sum(Y[x,c(1:112)]))
+  else return(0)
+})
+
+sigma <- variable(lower = 0)
+sigma2 <- variable(lower = 0)
+prop.rates <-  lognormal(meanlog = 0, sdlog = sigma, dim = c(1, m))
+cd1 <- cd / rowSums(cd)
+mu = (cd1 %*% t(prop.rates))
+prop.of.clust <- t(t(prop.of.clust))
+distribution(prop.of.clust) = normal(mean = mu, sd = sigma2)
+prop.model <- model(prop.rates,sigma,sigma2)
+prop.draws <- mcmc(prop.model, warmup = 500, n_samples = 500) # do on cluster
+draws_all <- do.call('rbind',prop.draws)
+prop.rates <- colMeans(draws_all[,1:74])
+prop.rates.sd <- apply(draws_all[,1:74],2,sd)
+names(prop.rates) = names(prop.rates.sd) <- colnames(cd)
+
+prop.rates <- prop.rates[-c(8,9,32:34,73)]
+prop.rates.sd <- prop.rates.sd[-c(8,9,32:34,73)]
+
+pvprop <- NULL
+for (zzz in names(prop.rates)[-1]) {
+  stat_mu = prop.rates[zzz] - prop.rates['N2']
+  stat_sd = sqrt(prop.rates.sd[zzz]**2 + prop.rates.sd['N2']**2)
+  zscore = stat_mu / stat_sd
+  pvprop <- c(pvprop, 1 - pchisq(q = zscore**2, df = 1))
+}
+which(p.adjust(pvprop,method='BH') < 0.05)
+# him.6, rip.1, brc.1, agt.2, rfs.1, brc.1.cep.1, mus.81.cep.1
+
+```
+
+# Visualize
+```{r}
+pdf('~/Cluster_comparison.pdf',16,10)
+par(mar = c(2,8,6,2), mfrow = c(1,2))
+o <- order(rates)
+f <- barplot(rates[o], col = c('white','darkred')[c(1,as.numeric(p.adjust(pvclust,method='BH') < 0.05)+1)][o],
+             xaxt = 'n', las = 2, ylab = '', cex.axis = 0.7, yaxt = 'n',
+             main = 'Number of clusters per generation', xlim  = c(0,0.5), horiz = T)
+points(x = clust[,1] / data$Generation[match(rownames(clust),data$Sample)] + rnorm(nrow(clust),mean=0.01,sd = 0.0001),
+       y = f[match(sapply(rownames(clust), function(x) colnames(cd)[cd[x,]>0]), names(rates)[o]),1],
+       pch = 16, col = 'gray10', cex = 0.5)
+arrows(y0 = f, x0 = rates[o] - 1.96*rates.sd[o], x1 = rates[o] + 1.96*rates.sd[o], length = 0, col = 'gray21', lwd = 0.5)
+axis(side=2, at = f, labels = print_names[sapply(names(rates)[o], function(x) grep(x,names(print_names))[1])],
+     cex.axis = 0.7, las = 2, font = 3)
+axis(side = 3, at = c(0,0.1,0.2,0.3,0.4,0.5), labels = c(0.0,0.1,0.2,0.3,0.4,0.5), cex.axis = 0.7)
+abline(v = rates['N2'], lty = 2)
+
+o <- order(prop.rates)
+f <- barplot(prop.rates[o], col = c('white','darkred')[c(1,as.numeric(p.adjust(pvprop,method='BH') < 0.05)+1)][o],
+             xaxt = 'n', las = 2, ylab = '', cex.axis = 0.7, yaxt = 'n',
+             main = 'Proportion of clustered mutations', xlim  = c(0,1), horiz = T)
+points(x = prop.of.clust[,1] + rnorm(nrow(prop.of.clust),mean=0.01,sd = 0.0001),
+       y = f[match(sapply(rownames(prop.of.clust), function(x) colnames(cd1)[cd1[x,]>0]), names(prop.rates)[o]),1],
+       pch = 16, col = 'gray10', cex = 0.5)
+arrows(y0 = f, x0 = prop.rates[o] - 1.96*prop.rates.sd[o], x1 = prop.rates[o] + 1.96*prop.rates.sd[o], length = 0,
+       col = 'gray21', lwd = 0.5)
+axis(side=2, at = f, labels = print_names[sapply(names(prop.rates)[o], function(x) grep(x,names(print_names))[1])],
+     cex.axis = 0.7, las = 2, font = 3)
+axis(side = 3, at = c(0:10)*0.1, labels = c(0:10)*0.1, cex.axis = 0.7)
+abline(v = prop.rates['N2'], lty = 2)
+legend('bottomright', legend = 'significantly different from N2 (FDR 5%)', fill = 'darkred',bty = 'n',
+       border = NA)
+dev.off()
+
+
+pdf('~/Cluster_comparison_main.pdf',10,6)
+set.seed(123)
+par(mfrow = c(1,2))
+boxplot(rates, frame = F, outline = F, ylim = c(0,max(rates+1.96*rates.sd)),
+        ylab = 'No. of clusters per generation', main = 'Clusters across genotypes')
+#newx <- jitter(rep(1, length(rates)), amount = 0.1)
+points(x = newx, y = rates, col = 'gray', pch = 16) 
+o <- which(p.adjust(pvclust,method='BH') < 0.1)
+points(x = newx[o+1], y = rates[o+1], col = 'darkred', pch = 16) 
+arrows(x0 = newx[o+1],y0 = rates[o+1] - 1.96*rates.sd[o+1],y1=rates[o+1]+1.96*rates.sd[o+1],
+       col = 'gray21',lwd=0.5,length=0)
+abline(h = rates['N2'], lty = 2)
+text(x = c(newx[o+1][1] - 0.2, newx[o+1][-1] + 0.2), y = rates[o+1], font = 3,
+     labels = print_names[sapply(names(rates)[o+1], function(x) grep(x,names(print_names))[1])], cex = 0.7)
+
+boxplot(prop.rates, frame = F, outline = F, ylim = c(0,max(prop.rates+1.96*prop.rates.sd)),
+        ylab = 'Prop. of clustered mut-s', main = 'Proportion of clustered mutations\n across genotypes')
+#newx2 <- jitter(rep(1, length(prop.rates)), amount = 0.1)
+points(x = newx2, y = prop.rates, col = 'gray', pch = 16) 
+o2 <- which(p.adjust(pvprop,method='BH') < 0.1)
+points(x = newx2[o2+1], y = prop.rates[o2+1], col = 'darkred', pch = 16) 
+arrows(x0 = newx2[o2+1],y0 = prop.rates[o2+1] - 1.96*prop.rates.sd[o2+1],
+       y1=prop.rates[o2+1]+1.96*prop.rates.sd[o2+1],
+       col = 'gray21',lwd=0.5,length=0)
+abline(h = prop.rates['N2'], lty = 2)
+text(x = c(newx2[o2+1][1] - 0.2, newx2[o2+1][c(2:3)] + 0.22,newx2[o2+1][4] - 0.2,newx2[o2+1][5] - 0.25,newx2[o2+1][6:7] - 0.2),
+     y = prop.rates[o2+1], font = 3,
+     labels = print_names[sapply(names(prop.rates)[o2+1], function(x) grep(x,names(print_names))[1])],
+     cex = 0.7)
+legend('topright', legend = 'significantly different\n from N2 (FDR 5%)', fill = 'darkred',bty = 'n',
+       border = NA, cex = 0.7)
+dev.off()
 ```
 
 
