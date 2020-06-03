@@ -1,3 +1,4 @@
+# load the table with SVs, available upon request
 load('~/SV_filtering_DELLY_better_clustering_2020.RData')
 
 sv.properties <- data.frame(genotype = c('N2', 'atm-1', 'brc-1', 'brc-1,ced-3', 
@@ -7,11 +8,9 @@ sv.properties <- data.frame(genotype = c('N2', 'atm-1', 'brc-1', 'brc-1,ced-3',
                             total_number = rep(0,18),
                             deletions = rep(0,18),
                             tandem_duplications = rep(0,18),
-                            #inversions = rep(0,13),
-                            #interchromosomal_events = rep(0,13),
-                            svs_with_insertion = c(0,0,3,NA,NA,2,4,1,NA,NA,5,NA,1,2,7,5,0,2),
-                            svs_with_MH = c(1,1,7,NA,NA,5,6,1,NA,NA,16,NA,2,7,5,5,3,1),
-                            svs_with_Grich = c(0,0,0,0,0,15,rep(0,12)),
+                            #svs_with_insertion = rep(0,18), #c(0,0,3,NA,NA,2,4,1,NA,NA,5,NA,1,2,7,5,0,2) - from manual inspection
+                            # svs_with_MH = rep(0,18), # c(1,1,7,NA,NA,5,6,1,NA,NA,16,NA,2,7,5,5,3,1)  - from manual inspection
+                            svs_with_Grich = rep(0,18),
                             indels_in_Grich = rep(0,18),
                             total_indels = rep(0,18),
                             svs_rep_left = rep(0,18),
@@ -19,23 +18,70 @@ sv.properties <- data.frame(genotype = c('N2', 'atm-1', 'brc-1', 'brc-1,ced-3',
                             variants_in_telomeres = rep(0,18),
                             variants_in_repeats = rep(0,18),
                             no.samples = rep(0,18))
-sv.properties <- sv.properties[-c(10,12,18),]
+sv.properties <- sv.properties[-c(10,12,18),] # genotypes excluded later
 sv.properties$genotype <- as.character(sv.properties$genotype)
 
-# Go through all samples
-endings <- c(":5",":6",":10",":20",":15",":40")
+########################################################################################
+
+# GC rich regions
+# from Marsico et al. 2019
 
 library(rtracklayer)
-# GC rich regions
-gc_plus <- import('~/Downloads/Celegans_all_w15_th-1_plus.hits.max.PDS.w50.35.bed')
-gc_minus <- import('~/Downloads/Celegans_all_w15_th-1_minus.hits.max.PDS.w50.35.bed')
+gc_plus <- import('Celegans_all_w15_th-1_plus.hits.max.PDS.w50.35.bed')
+gc_minus <- import('Celegans_all_w15_th-1_minus.hits.max.PDS.w50.35.bed')
 seqlevels(gc_plus) <- sapply(seqlevels(gc_plus), function(x) unlist(strsplit(x,split = '[_]'))[2])
 seqlevels(gc_minus) <- sapply(seqlevels(gc_minus), function(x) unlist(strsplit(x,split = '[_]'))[2])
 
+########################################################################################
+
+# Replication directions
+# from Pourkarimi et al. 2016
+
+repTimeN2LPRplus <- import("~/Downloads/GSE90939_RAW/GSM2417785_N2L_Pr_plus.wig.gz", format="WIG")
+repTimeN2LPRminus <- import("~/Downloads/GSE90939_RAW/GSM2417785_N2L_Pr_neg.wig.gz", format="WIG")
+repTimeN2LRRplus <- import("~/Downloads/GSE90939_RAW/GSM2417786_N2L_RR_plus.wig.gz", format="WIG")
+repTimeN2LRRminus <- import("~/Downloads/GSE90939_RAW/GSM2417786_N2L_RR_neg.wig.gz", format="WIG")
+
+repTimeN2PRplus <- import("~/Downloads/GSE90939_RAW/GSM2417781_N2_Pr_plus.wig.gz", format="WIG")
+repTimeN2PRminus <- import("~/Downloads/GSE90939_RAW/GSM2417781_N2_Pr_neg.wig.gz", format="WIG")
+repTimeN2RRplus <- import("~/Downloads/GSE90939_RAW/GSM2417782_N2_RR_plus.wig.gz", format="WIG")
+repTimeN2RRminus <- import("~/Downloads/GSE90939_RAW/GSM2417782_N2_RR_neg.wig.gz", format="WIG")
+
+repTimeegl30PRplus <- import("~/Downloads/GSE90939_RAW/GSM2417783_egl30_Pr_plus.wig.gz", format="WIG")
+repTimeegl30PRminus <- import("~/Downloads/GSE90939_RAW/GSM2417783_egl30_Pr_neg.wig.gz", format="WIG")
+repTimeegl30RRplus <- import("~/Downloads/GSE90939_RAW/GSM2417784_egl30_RR_plus.wig.gz", format="WIG")
+repTimeegl30RRminus <- import("~/Downloads/GSE90939_RAW/GSM2417784_egl30_RR_neg.wig.gz", format="WIG")
+
+
+# Replication fork directionality
+repTime <- granges(repTimeN2LPRplus)
+repTime <- resize(repTime, width(repTime) + 99, fix="end")
+mcols(repTime) <- DataFrame(N2.1 = (-repTimeN2PRminus$score-repTimeN2PRplus$score)/(-repTimeN2PRminus$score+repTimeN2PRplus$score),
+                            N2.2 = (-repTimeN2RRminus$score-repTimeN2RRplus$score)/(-repTimeN2RRminus$score+repTimeN2RRplus$score),
+                            elg30.1 =  (-repTimeegl30PRminus$score-repTimeegl30PRplus$score)/(-repTimeegl30PRminus$score+repTimeegl30PRplus$score),
+                            elg30.2 =  (-repTimeegl30RRminus$score-repTimeegl30RRplus$score)/(-repTimeegl30RRminus$score+repTimeegl30RRplus$score),
+                            N2L.1 =  (-repTimeN2LPRminus$score-repTimeN2LPRplus$score)/(-repTimeN2LPRminus$score+repTimeN2LPRplus$score),
+                            N2L.2 =  (-repTimeN2LRRminus$score-repTimeN2LRRplus$score)/(-repTimeN2LRRminus$score+repTimeN2LRRplus$score))
+t <- as.matrix(mcols(repTime))
+t[is.nan(t)] <- NA
+m <- rowMeans(t, na.rm = t)
+s <- rowMeans(sqrt((t-m)^2)) # standard errors across different worms
+table(abs(m)-2*s > 0)
+# FALSE   TRUE 
+# 507790 455057 
+# 45% of the genome assigned with directionality
+
+repStrand <- granges(repTime)
+strand(repStrand)[which(m<0)] <- "-" # leftward moving fork
+strand(repStrand)[which(m>0)] <- "+" # rightward moving fork
+strand(repStrand)[which(abs(m)-2*s < 0)] <- "*" # equally possible directions
+seqlevels(repStrand) <- sub("chr","", seqlevels(repStrand))
+
+########################################################################################
+
 # Repetitive regions
-load("~/Downloads/repStrand.RData")
-replication_tables_td <- list()
-replication_tables_del <- list()
+# from www.girinst.org/downloads/repeatmaps/C.Elegans
+
 library(BSgenome)
 worm_ref_genome <- "BSgenome.Celegans.UCSC.ce11"
 library(worm_ref_genome, character.only = TRUE)
@@ -46,7 +92,9 @@ repeat.table <- do.call('rbind', lapply(c('~/Downloads/CEmapI.gz',
                                           '~/Downloads/CEmapV.gz',
                                           '~/Downloads/CEmapX.gz'),read.table,header=F))
 head(repeat.table)
-colnames(repeat.table) <- c('Chromosome', 'Start_on_chrom', 'End_on_chrom', 'Name_of_similar_in_Repbase', 'Start_RepBase','End_RepBase','Orientation','Identity')
+colnames(repeat.table) <- c('Chromosome', 'Start_on_chrom', 'End_on_chrom', 
+                            'Name_of_similar_in_Repbase', 'Start_RepBase','End_RepBase',
+                            'Orientation','Identity')
 repeat.table.ranges <- GRanges(seqnames = paste0('chr',substr(as.character(repeat.table$Chromosome),
                                                         4,
                                                         nchar(as.character(repeat.table$Chromosome)))),
@@ -62,6 +110,8 @@ mat <- nucleotideSubstitutionMatrix(match = 1, mismatch = -3, baseOnly = TRUE)
 seqlevels(repeat.table.ranges) <- substr(as.character(seqlevels(repeat.table.ranges)),4,
                                         nchar(as.character(seqlevels(repeat.table.ranges))))
 
+########################################################################################
+
 # Subtelomeric regions
 WBcel235 <- readDNAStringSet("~/Desktop/C. elegans WB235/Caenorhabditis_elegans.WBcel235.dna.toplevel.fa") # get worm reference genome
 chr_sizes <- width(WBcel235)
@@ -74,6 +124,14 @@ subtelomere[,2] <- rep(16000,1)
 subtelomere[,3] <- chr_sizes[-5] - 16000
 subtelomere[,4] <- chr_sizes[-5] - 200
 
+########################################################################################
+
+# Go through all samples
+endings <- c(":5",":6",":10",":20",":15",":40")
+
+replication_tables_td <- list()
+replication_tables_del <- list()
+
 td_size <- list()
 del_size <- list()
 
@@ -83,9 +141,7 @@ for (gene in sv.properties$genotype) {
   sv <- do.call('rbind',SVclust.new[names(CD2Mutant)[CD2Mutant %in% paste0(gene, endings)]])
   no.sv <- do.call('rbind', delly.filtcounts[names(CD2Mutant)[CD2Mutant %in% paste0(gene, endings)]])
   sv <- sv[sv$clust.type!='some',]
-  #sv.properties$total_number[sv.properties$genotype == gene] <- sum(no.sv)
-  #ending <- max(data$Generation[data$Genotype.new == gene])
-  #sv <- do.call('rbind',SVclust.new[names(CD2Mutant)[CD2Mutant==paste(gene, ending, sep = ':')]])
+  # unique variants only, duplicated.breakpoints in useful_functions.R
   if (gene == 'N2') {
     sv <- sv[-c(6:7),]
     sv[5,'POS2'] <- 8379643
@@ -146,8 +202,8 @@ for (gene in sv.properties$genotype) {
     sv <- sv[-c(4,15,17),]
   }
   if (gene == 'smc-6') {
-    sv[1,'POS2'] <- sv[2,'POS2'] #•••••••••••
-    sv[5,'POS2'] <- sv[7,'POS2'] #•••••••••••
+    sv[1,'POS2'] <- sv[2,'POS2']
+    sv[5,'POS2'] <- sv[7,'POS2'] 
     sv <- sv[-c(2,6:7),]
   }
 
@@ -201,6 +257,7 @@ for (gene in sv.properties$genotype) {
   td_size[[gene]] <- width(td.sv.ranges)
   del_size[[gene]] <- width(del.sv.ranges)
   
+  # indel counts - requires a list of indel VCFs indels_dedup
   #indels <- indels_dedup[names(CD2Mutant)[CD2Mutant %in% paste0(gene, endings)]]
   #indels <- indels[sapply(indels,length)>0]
   #indels <- lapply(indels, granges)
@@ -219,61 +276,20 @@ for (gene in sv.properties$genotype) {
     }
   }
   sv.properties$variants_in_telomeres[sv.properties$genotype == gene] <- tel.count
-
-  #alist = list()
-  #for(y in 1:(length(all.bp.ranges)/2)) {
-  #    x1 <- all.bp.ranges[y]
-  #    x2 <- all.bp.ranges[y + length(all.bp.ranges)/2]
-  #    seq1 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x1))),
-  #                                        start(x1), end(x1))))
-  #    seq2 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x2))),
-  #                                        start(x2), end(x2))))
-  #    res <- pairwiseAlignment(seq1, seq2, type='local', substitutionMatrix=mat, gapOpening = 1, gapExtension = 3)
-  #    alist[[y]] <- nchar(res)
-  #}
-  #sv.properties$svs_with_MH[sv.properties$genotype == gene] <- sum(unlist(alist)>5)
-  #sv.properties$svs_with_MH[sv.properties$genotype == gene] <- sum(mhlist[[gene]]>0)
-  
-  
-  #mhlens[[gene]] <- NULL
-  #for (x in names(CD2Mutant)[CD2Mutant %in% paste0(gene, endings)]) {
-  #  if (x %in% names(delly.vcf) & length(delly.vcf[[x]])>0)
-  #    mhlens[[gene]] <- c(mhlens[[gene]],info(delly.vcf[[x]])[rownames(SVclust.new[[x]]),'HOMLEN'])
-  #}
-  #sv.properties$svs_with_MH[sv.properties$genotype == gene] <- sum(mhlens[[gene]]>0, na.rm = T)
-  
-  #cur.list <- delly.vcf[intersect(names(CD2Mutant)[CD2Mutant %in% paste0(gene, endings)], names(delly.tables))]
-  #cur.list <- cur.list[!is.na(cur.list)]
-  #ins.count <- 0
-  #for (worm in names(cur.list)) {
-  #  cur.list[[worm]] <- cur.list[[worm]][overlapsAny(cur.list[[worm]],all.bp.ranges)]
-  #  if (length(cur.list[[worm]])>0)
-  #    ins.count <- ins.count + length(which(info(cur.list[[worm]])$INSLEN>1))
-  #}
-  #sv.properties$svs_with_insertion[sv.properties$genotype == gene] <- ins.count
-  
-  #inslens <- NULL
-  #for (x in names(CD2Mutant)[CD2Mutant %in% paste0(gene, endings)]) {
-  #  if (x %in% names(delly.vcf) & length(delly.vcf[[x]])>0)
-  #    inslens <- c(inslens,length(which(info(delly.vcf[[x]])[rownames(SVclust.new[[x]]),'INSLEN']>0)))
-  #}
-  
-  #sv.properties$svs_with_insertion[sv.properties$genotype == gene] <- sum(inslens)
   
   print(gene)
 }
 
-#mhlist <- list()
+mhlist <- list()
 indmhlist <- list()
 for (gene in c(sv.properties$genotype, 'rev-3', 'polh-1', 'polh(lf31)-1')) {
   
   #ending = max(data$Generation[data$Genotype.new == gene])
   sv <- do.call('rbind',SVclust.new[names(CD2Mutant)[CD2Mutant %in% paste0(gene, endings)]])
-  #sv <- do.call('rbind',SVclust.new[names(CD2Mutant)[CD2Mutant==paste(gene, ending, sep=':')]])
   sv <- sv[sv$clust.type!='some',]
-  #all.bp.ranges <- GRanges(seqnames = c(as.character(sv$CHR1),as.character(sv$CHR2)), 
-  #                         ranges = IRanges(start = c(sv$POS1-30,sv$POS2-30), 
-  #                                          end = c(sv$POS1+30,sv$POS2+30)))
+  all.bp.ranges <- GRanges(seqnames = c(as.character(sv$CHR1),as.character(sv$CHR2)), 
+                           ranges = IRanges(start = c(sv$POS1-30,sv$POS2-30), 
+                                            end = c(sv$POS1+30,sv$POS2+30)))
   
   indels <- indels_dedup[names(CD2Mutant)[CD2Mutant %in% paste0(gene, endings)]]
   indels <- indels[sapply(indels,length)>0]
@@ -284,47 +300,47 @@ for (gene in c(sv.properties$genotype, 'rev-3', 'polh-1', 'polh(lf31)-1')) {
   allindels <- allindels[nchar(unlist(allindels$ALT))>5 | nchar(allindels$REF) > 5] 
   allindels <- unique(allindels)
 
-  #alist = NULL
+  alist = NULL
   blist = NULL
-  # if (length(sv) > 0)
-  #   for (y in 1:(length(all.bp.ranges)/2)) {
-  #     x1 <- all.bp.ranges[y]
-  #     x2 <- all.bp.ranges[y + length(all.bp.ranges)/2]
-  #     seq1 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x1))),
-  #                                         start(x1) + 1, start(x1) + 30)))
-  #     seq2 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x2))),
-  #                                         start(x2) + 1, start(x2) + 30)))
-  #     i <- 30
-  #     err <- 1
-  #     a <- 0
-  #     while((i>0) && err > 0) {
-  #       if (substr(seq1,i,i) == substr(seq2,i,i)) {
-  #         a <- a+1
-  #         i <- i-1
-  #       }
-  #       else {
-  #         err <- err - 1
-  #       }
-  #     }
-  # 
-  #     seq1 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x1))),
-  #                                         end(x1) - 30, end(x1))))
-  #     seq2 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x2))),
-  #                                         end(x2) - 30, end(x2))))
-  #     i <- 2
-  #     err <- 1
-  #     b <- 0
-  #     while((i<31) && err > 0) {
-  #       if (substr(seq1,i,i) == substr(seq2,i,i)) {
-  #         b <- b+1
-  #         i <- i+1
-  #       }
-  #       else {
-  #         err <- err-1
-  #       }
-  #     }
-  #     alist <- c(alist,a+b)
-  #   }
+  if (length(sv) > 0)
+     for (y in 1:(length(all.bp.ranges)/2)) {
+       x1 <- all.bp.ranges[y]
+       x2 <- all.bp.ranges[y + length(all.bp.ranges)/2]
+       seq1 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x1))),
+                                           start(x1) + 1, start(x1) + 30)))
+       seq2 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x2))),
+                                           start(x2) + 1, start(x2) + 30)))
+       i <- 30
+       err <- 1
+       a <- 0
+       while((i>0) && err > 0) {
+         if (substr(seq1,i,i) == substr(seq2,i,i)) {
+           a <- a+1
+           i <- i-1
+         }
+         else {
+           err <- err - 1
+         }
+       }
+   
+       seq1 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x1))),
+                                           end(x1) - 30, end(x1))))
+       seq2 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x2))),
+                                           end(x2) - 30, end(x2))))
+       i <- 2
+       err <- 1
+       b <- 0
+       while((i<31) && err > 0) {
+         if (substr(seq1,i,i) == substr(seq2,i,i)) {
+           b <- b+1
+           i <- i+1
+         }
+         else {
+           err <- err-1
+         }
+       }
+       alist <- c(alist,a+b)
+     }
   if (length(allindels)>0)
     for (y in 1:(length(allindels))) {
       if (nchar(allindels$REF)[y] < 5) {
@@ -358,44 +374,44 @@ for (gene in c(sv.properties$genotype, 'rev-3', 'polh-1', 'polh(lf31)-1')) {
         }
         
       }
-      #seq1 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x))),
-      #                                    start(x) - 29, start(x))))
-      #seq2 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x))),
-      #                                    end(x) - 29, end(x))))
-      #i <- 30
-      #err <- 1
-      #a <- 0
-      #while((i>0) && err > 0) {
-      #  if (substr(seq1,i,i) == substr(seq2,i,i)) {
-      #    a <- a+1
-      #    i <- i-1
-      #  }
-      #  else {
-      #    err <- err - 1
-      #  }
-      #}
+      seq1 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x))),
+                                          start(x) - 29, start(x))))
+      seq2 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x))),
+                                          end(x) - 29, end(x))))
+      i <- 30
+      err <- 1
+      a <- 0
+      while((i>0) && err > 0) {
+        if (substr(seq1,i,i) == substr(seq2,i,i)) {
+          a <- a+1
+          i <- i-1
+        }
+        else {
+          err <- err - 1
+        }
+      }
 
-      #seq1 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x))),
-      #                                    start(x), start(x) + 30)))
-      #seq2 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x))),
-      #                                    end(x), end(x) + 30)))
-      #i <- 2
-      #err <- 1
-      #b <- 0
-      #while((i<31) && err > 0) {
-      #  if (substr(seq1,i,i) == substr(seq2,i,i)) {
-      #    b <- b+1
-      #    i <- i+1
-      #  }
-      #  else {
-      #    err <- err-1
-      #  }
-      #}
-      #blist <- c(blist,a+b)
-      blist <- c(blist,a)
+      seq1 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x))),
+                                          start(x), start(x) + 30)))
+      seq2 <- toupper(as.character(getSeq(get(worm_ref_genome), paste0('chr',as.character(seqnames(x))),
+                                          end(x), end(x) + 30)))
+      i <- 2
+      err <- 1
+      b <- 0
+      while((i<31) && err > 0) {
+        if (substr(seq1,i,i) == substr(seq2,i,i)) {
+          b <- b+1
+          i <- i+1
+        }
+        else {
+          err <- err-1
+        }
+      }
+      blist <- c(blist,a+b)
+      
     }
 
-  #mhlist[[gene]] <- alist
+  mhlist[[gene]] <- alist
   indmhlist[[gene]] <- blist
   print(gene)
 }  
@@ -481,37 +497,6 @@ axis(side = 1, at = c(1:15), las = 2, labels = sv.properties$genotype, lty = 0, 
 plot(sv.properties$tandem_duplications/sv.properties$total_number, bty = 'n', xaxt = 'n', ylab = 'Proportion of TDs', xlab = '', pch = 16)
 axis(side = 1, at = c(1:15), las = 2, labels = sv.properties$genotype, lty = 0, tick = F, tck = 0.01, font = 3)
 
-# based on Bettina's data, could not count properly...
-plot(sv.properties$svs_with_insertion/(sv.properties$total_number), bty = 'n', xaxt = 'n', 
-     ylab = 'Proportion of SVs with insertion', 
-     xlab = '', pch = 16)
-axis(side = 1, at = c(1:15), las = 2, labels = sv.properties$genotype, lty = 0, tick = F, tck = 0.01, font = 3)
-
-# what did Bettina count as microhomology???
-plot(sv.properties$svs_with_MH/(sv.properties$total_number), bty = 'n', xaxt = 'n', 
-     ylab = 'Proportion of SVs with MH', xlab = '',pch = 16)
-axis(side = 1, at = c(1:15), las = 2, labels = sv.properties$genotype, lty = 0, tick = F, tck = 0.01, font = 3)
-
-pdf('SV_properties_old.pdf', 7, 5)
-par(mar = c(6,4,2,2))
-plot(NA, NA, bty = 'n', xaxt = 'n', ylab = 'Proportion of SVs', xlab = '', ylim = c(0,1), xlim = c(1,16), las = 2)
-for (j in seq(2,16,2))
-  polygon(x = c(j-0.5,j-0.5,j+0.5,j+0.5,j-0.5),
-          y = c(0,1,1,0,0),
-          col = 'grey86', border = NA)
-#points(x = 1:15 + 0.2, sv.properties$svs_with_insertion/(sv.properties$total_number), bty = 'n', xaxt = 'n', pch = 16, col = 'orange')
-totnum <- c(3,13,15,NA,NA,30,35,19,NA,45,15,12,33,23,11,10)
-sv.means <- sv.properties$svs_with_MH/(totnum)
-sv.sds <- sqrt(sv.means * (1 - sv.means) / totnum)
-lows <- sv.means - qnorm(0.975) * sv.sds
-lows[lows<0] <- 0
-arrows(x0 = 1:16, y0 = lows, y1 = sv.means + qnorm(0.975)*sv.sds,
-       lwd = 0.5, col = 'purple', length=0, angle=90)
-points(x = 1:16, sv.properties$svs_with_MH/totnum, pch = 16, col = 'purple')
-#legend('topright', bty = 'n', legend = c('SVs with MH', 'SVs with insertions'), 
-#       col = c('purple', 'orange'), pch = 16)
-axis(side = 1, at = c(1:16), las = 2, labels = sv.properties$genotype, lty = 0, tick = F, tck = 0.01, font = 3)
-dev.off()
 
 allmean <- sum(width(c(gc_minus,gc_plus))) / sum(chr_sizes[-5])
 allsd <- sqrt(sum(width(c(gc_minus,gc_plus))) / sum(chr_sizes[-5]) * (1 - sum(width(c(gc_minus,gc_plus))) / sum(chr_sizes[-5])))
@@ -538,13 +523,6 @@ lows[lows<0] <- 0
 points(x = c(1:15)+0.2, y = sv.means,pch = 16,col = 'brown')
 arrows(x0 = c(1:15) + 0.2, y0 = lows, y1 = sv.means + qnorm(0.975)*sv.sds,
        lwd = 0.5, col = 'brown', length=0, angle=90)
-#abline(h = allmean, lty = 2, col = 'brown')
-#polygon(x = c(-0.5,-0.5,15.5,15.5,-0.5), 
-#        y = c(0, 
-#              allmean + 2 * allsd, 
-#              allmean + 2 * allsd,
-#              0, 0),
-#        col = adjustcolor('brown', alpha = 0.1), border = NA)
 legend('topright', bty = 'n', legend = c('SVs in G-rich sequences', 'indels in G-rich sequences', 'expected proportion'), 
        col = c('black', 'brown', 'black'), pch = c(16,16,16))
 axis(side = 1, at = c(1:15), las = 2, labels = sv.properties$genotype, lty = 0, tick = F, tck = 0.01, font = 3)
@@ -590,75 +568,6 @@ legend('topright', bty = 'n', legend = c('in telomeric regions', 'in repetitive 
        col = c( 'brown', 'blue', 'black'), pch = 16)
 axis(side = 1, at = c(1:15), las = 2, labels = sv.properties$genotype, lty = 0, tick = F, tck = 0.01, font = 3)
 dev.off()
-
-plot(log10(sv.properties$svs_rep_left/sv.properties$svs_rep_right), bty = 'n', xaxt = 'n', ylab = 'Ratio of left to right replicated SVs', xlab = '', yaxt = 'n',pch = 16)
-axis(side = 1, at = c(1:15), las = 2, labels = sv.properties$genotype, lty = 0, tick = F, tck = 0.01, font = 3)
-axis(side = 2, at = log10(c(0.5, 1, 1.5, 2,3,4,5,6)), las = 2, labels = c(0.5, 1, 1.5,2,3,4,5,6))
-abline(h = 0, lty = 2)
-
-par(mar = c(6,4,4,6))
-plot(NA, NA, bty = 'n', xaxt = 'n', 
-     ylab = 'Proportion of SVs with BP in repetitive regions', xlab = '',main = 'Repetitive regions',
-     ylim = c(0,1), xlim = c(1,15), las = 2)
-axis(side = 1, at = c(1:15), las = 2, labels = sv.properties$genotype, lty = 0, tick = F, tck = 0.01, font = 3)
-for (j in 1:15)
-  polygon(x = c(j - 0.4, j - 0.4, j + 0.4, j + 0.4, j + 0.4),
-          y = c(0, sv.properties$total_number[j] / 100,sv.properties$total_number[j] / 100,0,0), col='brown')
-points(x = 1:15, y = sv.properties$variants_in_repeats/sv.properties$total_number, pch = 16)
-axis(side = 4, at = c(0,0.2,0.4,0.6,0.8,1), las = 2, lwd = 0, lwd.ticks = 2, col.text = 'brown',
-     labels = c(0,20,40,60,80,100), col = 'brown')
-mtext("Total number of SVs", side = 4, line = 3)
-#dev.off()
-
-tmp <- import('1018/CD0001c/CD0001c.bw')
-
-bins <- c(seq(1,chr_lens[1],10000),
-          seq(1,chr_lens[2],10000),
-          seq(1,chr_lens[3],10000),
-          seq(1,chr_lens[4],10000),
-          seq(1,chr_lens[5],10000),
-          seq(1,chr_lens[6],10000))
-new_ranges <- GRanges(seqnames = rep(names(chr_lens), c(1508,1528,1379,1750,2093,1772)), ranges = IRanges(start = bins, end = bins + 100000))
-
-scores <- NULL
-for (j in 1:length(new_ranges)) {
-  tmp1 <- import('1018/CD0001c/CD0001c.bw', which = new_ranges[j])
-  scores <- c(scores,median(tmp1$score, na.rm = T))
-  print(j)
-}
-
-scores_helq <- NULL
-for (j in 1:length(new_ranges)) {
-  tmp1 <- import('1018/CD0007c/CD0007c.bw', which = new_ranges[j])
-  scores_helq <- c(scores_helq,median(tmp1$score, na.rm = T))
-  print(j)
-}
-
-######################################################################3
-
-load('nb5/WORM_FILTERING/DELLY_SV_after_QC_most_recent_more_filt_2020.RData')
-delly.vcf <- lapply(delly.vcf, function(vcf) vcf[seqnames(vcf) %in% c("I","II","III","IV","V","X")])
-delly.vcf <- lapply(delly.vcf, function(vcf) vcf[geno(vcf)[['DR']][,2] < 150 & 
-                                                   geno(vcf)[['DR']][,2] > 15 &
-                                                   (geno(vcf)[['DR']][,1] + geno(vcf)[['DV']][,1]) > 15 &
-                                                   (geno(vcf)[['DV']][,1] / (geno(vcf)[['DR']][,1] + geno(vcf)[['DV']][,1])) > 0.05])
-barplot(sapply(delly.vcf,length))
-# finished filtering...
-load('nb/WORM_FILTERING/DELLY_SV_after_QC_most_recent_more_filt_2020.RData')
-delly.tables <- lapply(delly.vcf, function(vcf) {
-  if (length(vcf)==0) return(NA)
-  tmp <- data.frame(CHR1 = seqnames(granges(vcf)),
-                    POS1 = start(granges(vcf)),
-                    CHR2 = info(vcf)$CHR2,
-                    POS2 = info(vcf)$END,
-                    READS = info(vcf)$PE,
-                    TYPE = info(vcf)$SVTYPE)
-  rownames(tmp) <- names(vcf)
-  return(tmp)
-})
-
-# upload the list with TD/DEL p-values and merge with it
-
 
 
 ############################################################
