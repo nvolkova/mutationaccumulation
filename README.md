@@ -16,6 +16,8 @@ Script structure:
 
 `dog_1_analysis.R`	- separate script producing plot with distributions of G4 and non-G4 associated mutations in dog-1 mutants.
 
+`plotting_complex_SVs.R` - separate script for plotting complex structural variants, requires a table of SVs as well as .bw and bamstat files for each sample (including the reference samples).
+
 `plotting_functions.R`	- supplementary fuctions for signature plotting.
 
 `useful_functions.R`	- supplementary functions for analysis.
