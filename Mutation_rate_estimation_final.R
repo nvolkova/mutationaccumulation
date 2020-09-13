@@ -13,9 +13,10 @@ library(MASS)
 library(VariantAnnotation)
 library(ggplot2)
 library(reshape2)
-library(ggpubr)
 source('plotting_functions.R')
-source('seful_functions.R')
+source('useful_functions.R')
+
+##################################################################
 
 # Upload the metadata and mutation counts
 
@@ -118,6 +119,7 @@ generation.function <- function(N) {
     0.25*sum(sapply(1:(N-1), function(i) sum(sapply(1:i, function(j) 1/(2^(j-1))))))
   return(alpha)
 }
+
 #################################################################3
 
 # Model matrix
@@ -1071,5 +1073,49 @@ plot_fullsig_wb(to.show, CI = T,
 #geom_text(data = df_stars, aes(x = x, y = y), label = "***", size=6)
 dev.off()
 
+##################################################################
 
+# Session information
+# (was run on an LSF for a speed up, hence different versions)
 
+# R version 3.5.1 (2018-07-02)
+# Matrix products: default
+
+# attached base packages:
+# [1] stats4    parallel  stats     graphics  grDevices utils     datasets
+# [8] methods   base
+
+# other attached packages:
+# [1] reshape2_1.4.3              ggplot2_3.1.0
+# [3] VariantAnnotation_1.28.13   Rsamtools_1.34.1
+# [5] Biostrings_2.50.2           XVector_0.22.0
+# [7] SummarizedExperiment_1.12.0 DelayedArray_0.8.0
+# [9] BiocParallel_1.16.6         matrixStats_0.54.0
+# [11] Biobase_2.42.0              GenomicRanges_1.34.0
+# [13] GenomeInfoDb_1.18.2         IRanges_2.16.0
+# [15] S4Vectors_0.20.1            BiocGenerics_0.28.0
+# [17] MASS_7.3-50                 bayesplot_1.7.0
+# [19] greta_0.3.0.9002
+
+# loaded via a namespace (and not attached):
+# [1] httr_1.4.0               bit64_0.9-7              jsonlite_1.6
+# [4] assertthat_0.2.1         blob_1.1.1               BSgenome_1.50.0
+# [7] GenomeInfoDbData_1.2.0   progress_1.2.0           globals_0.12.4
+# [10] pillar_1.3.1             RSQLite_2.1.1            lattice_0.20-35
+# [13] glue_1.3.1               reticulate_1.11.1        digest_0.6.18
+# [16] colorspace_1.4-1         Matrix_1.2-14            plyr_1.8.4
+# [19] XML_3.98-1.19            pkgconfig_2.0.2          biomaRt_2.38.0
+# [22] listenv_0.7.0            zlibbioc_1.28.0          purrr_0.3.2
+# [25] scales_1.0.0             whisker_0.3-2            tibble_2.1.1
+# [28] withr_2.1.2              GenomicFeatures_1.34.8   lazyeval_0.2.2
+# [31] magrittr_1.5             crayon_1.3.4             memoise_1.1.0
+# [34] future_1.12.0            tools_3.5.1              prettyunits_1.0.2
+# [37] hms_0.4.2                stringr_1.4.0            munsell_0.5.0
+# [40] AnnotationDbi_1.44.0     compiler_3.5.1           rlang_0.3.3
+# [43] grid_3.5.1               RCurl_1.95-4.12          ggridges_0.5.1
+# [46] bitops_1.0-6             base64enc_0.1-3          gtable_0.3.0
+# [49] codetools_0.2-15         DBI_1.0.0                R6_2.4.0
+# [52] GenomicAlignments_1.18.1 tfruns_1.4               dplyr_0.8.0.1
+# [55] tensorflow_1.10          rtracklayer_1.42.2       bit_1.1-14
+# [58] stringi_1.4.3            Rcpp_1.0.1               tidyselect_0.2.5
+# [61] coda_0.19-2

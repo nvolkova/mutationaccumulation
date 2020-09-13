@@ -1,4 +1,10 @@
-plot_sig_wb <- function (mut_matrix, colors=NA, norm=T, ymax = NA, ymin = NA, flip=F, ind=F, font=11, size=12,
+# Plot a base substitution signature with or without CIs
+# mut_matrix - a table with 96-long vectors of base substitutions (in absolute numbers or relative proportions) in columns
+# CI = FALSE - an indicator whether the confidence intervals should be drawn
+# low, high - if CI = TRUE, these arguments will be screened for matrices containing the 95% low and upper bounds of the entries in mut_matrix
+# norm = TRUE - an indicator denoting whether the mut_matrix (and low/high) entries should be normalised before plotting
+#               if norm = FALSE, the absolute numbers will be plotted 
+plot_sig_wb <- function (mut_matrix, colors = NA, norm=T, ymax = NA, ymin = NA, flip=F, ind=F, font=11, size=12,
                          CI = F, low = NULL, high = NULL, DNV = FALSE, diff_scale = F,
                          rownames = T, diff_limits = NULL, thr = 0.05, size.all = 10, err.bar.size = 0.5) # plotting 96-signatures / profiles with no lines with/out CIs
 {
@@ -122,25 +128,9 @@ plot_sig_wb <- function (mut_matrix, colors=NA, norm=T, ymax = NA, ymin = NA, fl
   
 }
 
-
-GG_save_pdf = function(list, filename, ...) {
-  #start pdf
-  pdf(filename, ...)
-  #loop
-  count <- 1
-  for (p in list) {
-    print(p)
-    print(count)
-    count = count +1
-  }
-  #end pdf
-  dev.off()
-  invisible(NULL)
-}
-
 ############################################################################################################
 
-# visualisation for the huge profile! (worms)
+# visualisation for the huge profile!
 
 TRIPLETS = c(
   "A*A", "A*C", "A*G", "A*T",
@@ -158,7 +148,18 @@ library(grid)
 library(ggplot2)
 library(reshape2)
 
-
+# Plot a full mutation signature with or without CIs
+# mut_matrix - a table with 119-long vectors of mutation counts/proportions per column
+# CI = FALSE - an indicator whether the confidence intervals should be drawn
+# low, high - if CI = TRUE, these arguments will be screened for matrices containing the 95% low and upper bounds of the entries in `mut_matrix`
+# norm = TRUE - an indicator denoting whether the mut_matrix (and low/high) entries should be normalised before plotting
+#               if norm = FALSE, the raw numbers from mut_matrix will be plotted 
+# diff_scale = FALSE - allow for different scales in visulasing different columns of `mut_matrix`
+# rownames = TRUE - indicator whether the context names should be plotted (on the bottom of the plot)
+# diff_limits = NULL - can be supplied as a list of y-axis limits for plotting different entry columns of `mut_matrix`
+#                      only works when `diff_scale = TRUE`
+# significance = NULL - can be supplied as a matrix of p-values of comparison to the first column in `mut_matrix`
+# thr = 0.05 - threshold to consider the difference significant (as per p-values in `significance`)
 plot_fullsig_wb <- function(mut_matrix, colors=NA, norm=T, ymax=NA, ytitle = 'Number of mutations', # signatures for 119 profile, DNV collapsed, indel resolved
                                CI = F, low = NA, high = NA, diff_scale = F, rownames = T, diff_limits = NULL,
                                significance = NULL, thr = 0.05, size.all = 10, err.bar.size = 0.5, yspace = NULL)

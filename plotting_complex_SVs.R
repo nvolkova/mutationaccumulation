@@ -1,6 +1,6 @@
 #####################################################################################
-########## script for visualizing complex rearrangements, 14.02.2017 ################
-#####################################################################################
+########## script for visualizing complex rearrangements             ################
+########## N.Volkova, EMBL-EBI, 2019                                 ################
 #####################################################################################
 
 # libraries
@@ -31,26 +31,27 @@ names(CD2Mutant) <- data$Sample
 
 # Single chromosome complex events
 # SV - table with breakpoints (from svmat)
+# ref.reads - total number of reads in the reference file (default - number of reads in CD0850b)
 # ymax - the height of the plot will be max(ymax, max(coverage / coverage in ref))
 # unit - bin length for coverage
-chr_lens <- c(15072434,15279421,13783801,17493829,20924180,17718942)
+# REFPATH - path to the bigwig track of the reference sample
+# FILEPATH - path to the bigwig track of the sample of interest
+# STATPATH - path to the bamstat table for the sample of interest
+# main - custom plot title, default is NULL
+
+chr_lens <- c(15072434,15279421,13783801,17493829,20924180,17718942) # fixed the info from C. elegans WB235 (Ensembl)
 names(chr_lens) <- c('I','II','III','IV','V','X')
 
-plot_sv_new <- function(SV,ref.reads=44773320,ymax=5,unit =100, 
+plot_sv <- function(SV,ref.reads=44773320,ymax=5,unit =100, 
                         REFPATH="/PATH/TO/REF/BW", 
                         FILEPATH="/PATH/TO/SAMPLE/BW",
-                        ending = '.bw', 
-                        main = NULL) # assumes that bw files have the names like "sample_name.bw"
+                        STATPATH="/PATH/TO/SAMPLE/BAMSTAT",
+                        main = NULL)
 {
   COLOR=c("#E7298A","#66A61E","#E6AB02","cyan")
   names(COLOR) = c("DUP","DEL","INV","BND")
   
-  file.ref <- paste(REFPATH) # path to reference BIGWIG
-  #file <- paste(FILEPATH,as.character(SV$Sample[1]),"/",as.character(SV$Sample[1]),ending,sep="") # path to BIGWIG of the sample of interest
-  file <- paste(FILEPATH, as.character(SV$Sample[1]),ending,sep="") 
-  file_bw <- paste("~/bamstats/",as.character(SV$Sample[1]),".stat.dat",sep="") # path to the bamstat file of interest
-  
-  alt.reads <- sum(read.table(file_bw)$V3[1:6])
+  alt.reads <- sum(read.table(STATPATH)$V3[1:6])
   r.ratio <- ref.reads / alt.reads
   
   chr <- as.character(SV$CHR1[1])
@@ -58,8 +59,8 @@ plot_sv_new <- function(SV,ref.reads=44773320,ymax=5,unit =100,
   big.ranges <- c(max(1,coords[1] - (coords[2]-coords[1])),min(coords[2] + (coords[2]-coords[1]),chr_lens[chr]))
   x <- seq(from=big.ranges[1], to=big.ranges[2], by = unit) #???
   big.ranges <- GRanges(seqnames = chr, ranges = IRanges(start=big.ranges[1], end=big.ranges[2]))
-  region <- import(BigWigFile(file),which=big.ranges)
-  region.ref <- rtracklayer::import(file.ref,which=big.ranges)
+  region <- import(BigWigFile(FILEPATH),which=big.ranges)
+  region.ref <- rtracklayer::import(REFPATH,which=big.ranges)
   bins <- GRanges(seqnames=chr,
                   ranges=IRanges(start=x[-length(x)]+1,end=x[-1],names = rep(chr,length(x)-1)),
                   seqinfo=seqinfo(region))
@@ -73,8 +74,6 @@ plot_sv_new <- function(SV,ref.reads=44773320,ymax=5,unit =100,
                  CD2Mutant[as.character(unique(SV$Sample))],") on chromosome ",
                  as.character(SV$CHR1[1]),sep="")
   
-  ymax = 5
-  pdf('~/CD0009f.pdf',7,5)
   plot(x[-length(x)], points/points.ref * r.ratio, 
        cex=0.4,lwd=2, 
        ylim = c(0,max(ymax,max(points/points.ref * r.ratio,na.rm = T))),# * r.ratio,na.rm=T))),
@@ -95,30 +94,30 @@ plot_sv_new <- function(SV,ref.reads=44773320,ymax=5,unit =100,
           y=rep(height,2), col=color, lwd=3)
   }
   legend('topleft',cex = 0.5, legend = names(COLOR), fill = COLOR)
-  dev.off()
+
 }
 
-
-# 2 chroms
-
+# 2-chromosome complex events
 # SV - table with breakpoints (from svmat)
+# ref.reads - total number of reads in the reference file (default - number of reads in CD0850b)
 # ymax - the height of the plot will be max(ymax, max(coverage / coverage in ref))
 # unit1 - bin length for coverage in first chromosome
 # unit2 - bin length for coverage in second chromosome
+# REFPATH - path to the bigwig track of the reference sample
+# FILEPATH - path to the bigwig track of the sample of interest
+# STATPATH - path to the bamstat table for the sample of interest
+# main - custom plot title, default is NULL
 
-plot_sv_int_new <- function(SV,ref.reads=44773320,ymax=5, unit1 = 100, unit2 = 100, 
+plot_sv_int <- function(SV,ref.reads=44773320,ymax=5, unit1 = 100, unit2 = 100, 
                             REFPATH="PATH/TO/REFERENCE/BW", 
                             FILEPATH="PATH/TO/SAMPLE/BW",
-                            ending = '.bw') # assumes that bw files have the names like "sample_name.bw"
+                            STATPATH="/PATH/TO/SAMPLE/BAMSTAT",
+                            ending = '.bw') 
 {
   COLOR=c("#E7298A","#66A61E","#E6AB02","cyan")
   names(COLOR) = c("TD","DEL",'INV','BND')
   
-  file.ref <- REFPATH # path to reference BW
-  file <- paste(FILEPATH,as.character(SV$Sample[1]),ending,sep="") # path to BW of interest
-  file_bw <- paste("~/bamstats/",as.character(SV$Sample[1]),".stat.dat",sep="") # path to bamstats
-  
-  alt.reads <- sum(read.table(file_bw)$V3[1:6])
+  alt.reads <- sum(read.table(STATPATH)$V3[1:6])
   r.ratio <- ref.reads / alt.reads
   
   chrs <- unique(c(as.character(SV$CHR1),as.character(SV$CHR2)))
@@ -136,10 +135,10 @@ plot_sv_int_new <- function(SV,ref.reads=44773320,ymax=5, unit1 = 100, unit2 = 1
   x2 <- seq(from=big.ranges2[1], to=big.ranges2[2], by = unit2) 
   big.ranges1 <- GRanges(seqnames = chrs[1], ranges = IRanges(start=big.ranges1[1], end=big.ranges1[2]))
   big.ranges2 <- GRanges(seqnames = chrs[2], ranges = IRanges(start=big.ranges2[1], end=big.ranges2[2]))
-  region1 <- import(file,which=big.ranges1)
-  region2 <- import(file,which=big.ranges2)
-  region.ref1 <- import(file.ref,which=big.ranges1)
-  region.ref2 <- import(file.ref,which=big.ranges2)
+  region1 <- import(FILEPATH,which=big.ranges1)
+  region2 <- import(FILEPATH,which=big.ranges2)
+  region.ref1 <- import(REFPATH,which=big.ranges1)
+  region.ref2 <- import(REFPATH,which=big.ranges2)
   bins1 <- GRanges(seqnames=chrs[1],
                    ranges=IRanges(start=x1[-length(x1)]+1,end=x1[-1],names = rep(chrs[1],length(x1)-1)),
                    seqinfo=seqinfo(region1))
@@ -155,10 +154,14 @@ plot_sv_int_new <- function(SV,ref.reads=44773320,ymax=5, unit1 = 100, unit2 = 1
   points2 <- as.numeric(binnedAverage(bins2,numvar2,varname="score",na.rm = T)$score) + 0.1
   points.ref2 <- as.numeric(binnedAverage(bins2,numvar.ref2,varname="score",na.rm = T)$score) + 0.1
   
-  pdf('CD0751d_variant_4_upd_real.pdf',7,5)
-  plot(NA,NA,xlim = c(0, 100), ylim = c(0,ymax), bty = 'n', xaxt = 'n', xlab = 'Position', ylab= 'Coverage',
-       main = paste0('Complex variant for ', as.character(unique(SV$Sample)), ', chromosomes ',paste0(chrs, collapse = ',')))    
-  axis(side = 1, lwd = 0.3, at = c(0,45,55,100),labels = paste0(round(c(x1[1],x1[length(x1)],x2[1],x2[length(x2)])/1000),' kb'),
+  if (is.null(main))
+    main = paste0('Complex variant for ', as.character(unique(SV$Sample)), 
+                  ', chromosomes ',paste0(chrs, collapse = ','))
+  
+  plot(NA,NA,xlim = c(0, 100), ylim = c(0,ymax), bty = 'n', 
+       xaxt = 'n', xlab = 'Position', ylab= 'Coverage', main = main)   
+  axis(side = 1, lwd = 0.3, at = c(0,45,55,100),
+       labels = paste0(round(c(x1[1],x1[length(x1)],x2[1],x2[length(x2)])/1000),' kb'),
        las = 2, cex.axis = 0.4)
   abline(v = 50, lty = 2)
   coords1 <- seq(0,45,length.out = length(x1)-1)
@@ -204,17 +207,45 @@ plot_sv_int_new <- function(SV,ref.reads=44773320,ymax=5, unit1 = 100, unit2 = 1
 # BND00000957    V  6338031    I 10032498    15  BND CD0394d    COMPLEX
 
 pdf('Complex variant in CD0009f.pdf',7,4)
-plot_sv_int(fullsvmat[fullsvmat$NAME == 'CD0009f' & fullsvmat$CLUSTER == 4,], unit1 = 10000, unit2 = 50)
+plot_sv_int(fullsvmat[fullsvmat$NAME == 'CD0009f' & fullsvmat$CLUSTER == 4,], 
+            unit1 = 10000, unit2 = 50,
+            REFPATH='/path/to/CD0001b.bw',
+            FILEPATH='/path/to/CD0009f.bw',
+            STATPATH='/path/to/CD0009f.bamstat.txt')
 dev.off()
 
-pdf('Complex variant in CD0373i.pdf',7,4)
-plot_sv(fullsvmat[fullsvmat$NAME == 'CD0373i' & fullsvmat$CLUSTER == 1,])
-dev.off()
-
-pdf('Complex variant in CD0374i(dog-1).pdf',7,4)
-plot_sv_int(fullsvmat[fullsvmat$NAME == 'CD0374i' & fullsvmat$CLUSTER == 3,], unit1=100, unit2=10)
-dev.off()
 
 pdf('Complex variant in CD0375d(exo-3).pdf',7,4)
-plot_sv(fullsvmat[fullsvmat$NAME == 'CD0375d' & fullsvmat$CLUSTER == 2,])
+plot_sv(fullsvmat[fullsvmat$NAME == 'CD0375d' & fullsvmat$CLUSTER == 2,],
+        REFPATH='/path/to/CD0001b.bw',
+        FILEPATH='/path/to/CD0375d.bw',
+        STATPATH='/path/to/CD0375d.bamstat.txt')
 dev.off()
+
+# sessionInfo()
+# R version 3.6.3 (2020-02-29)
+# 
+# attached base packages:
+#   [1] stats4    parallel  stats     graphics  grDevices utils     datasets  methods   base     
+# 
+# other attached packages:
+# [1] rtracklayer_1.44.4          VariantAnnotation_1.30.1    Rsamtools_2.0.3             Biostrings_2.52.0          
+# [5] XVector_0.24.0              SummarizedExperiment_1.14.1 DelayedArray_0.10.0         BiocParallel_1.18.1        
+# [9] matrixStats_0.55.0          Biobase_2.44.0              GenomicRanges_1.36.1        GenomeInfoDb_1.20.0        
+# [13] IRanges_2.18.3              S4Vectors_0.22.1            BiocGenerics_0.30.0         ggplot2_3.2.1              
+# [17] reshape2_1.4.3             
+# 
+# loaded via a namespace (and not attached):
+# [1] Rcpp_1.0.2               lattice_0.20-38          prettyunits_1.0.2        assertthat_0.2.1         digest_0.6.22           
+# [6] R6_2.4.0                 plyr_1.8.4               RSQLite_2.1.2            evaluate_0.14            httr_1.4.1              
+# [11] pillar_1.4.2             zlibbioc_1.30.0          rlang_0.4.5              GenomicFeatures_1.36.4   progress_1.2.2          
+# [16] lazyeval_0.2.2           rstudioapi_0.10          blob_1.2.0               Matrix_1.2-18            rmarkdown_1.16          
+# [21] stringr_1.4.0            RCurl_1.95-4.12          bit_1.1-14               biomaRt_2.40.5           munsell_0.5.0           
+# [26] compiler_3.6.3           xfun_0.10                pkgconfig_2.0.3          htmltools_0.4.0          tidyselect_0.2.5        
+# [31] tibble_2.1.3             GenomeInfoDbData_1.2.1   XML_3.98-1.20            crayon_1.3.4             dplyr_0.8.3             
+# [36] withr_2.1.2              GenomicAlignments_1.20.1 bitops_1.0-6             grid_3.6.3               gtable_0.3.0            
+# [41] DBI_1.0.0                magrittr_1.5             scales_1.0.0             stringi_1.4.3            vctrs_0.2.4             
+# [46] tools_3.6.3              bit64_0.9-7              BSgenome_1.52.0          glue_1.3.1               purrr_0.3.3             
+# [51] hms_0.5.3                yaml_2.2.0               AnnotationDbi_1.46.1     colorspace_1.4-1         memoise_1.1.0           
+# [56] knitr_1.25   
+#

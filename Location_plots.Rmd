@@ -10,6 +10,8 @@ Libraries
 library(VariantAnnotation)
 source('useful_functions.R')
 source('plotting_functions.R')
+library(ggplot2)
+library(reshape2)
 ```
 
 Read sample annotation
@@ -29,11 +31,11 @@ names(CD2Mutant) <- data$Sample
 Read the VCF lists with base substitutions, indels and SVs
 ```{r}
 # Upload indels
-load('Indels_after_deduplication_with_special_treatment_for_MA_worms_FULL.RData')
+indels_dedup <- sapply(names(CD2Mutant), function(x) readVcf(paste0('PATH/TO/FILTERED/INDEL/VCFS/',x,'.vcf')))
 # Upload subs
-load('Substitutions_after_deduplication_with_special_treatment_for_MA_worms_FULL.RData')
+vcfs_dedup <- sapply(names(CD2Mutant), function(x) readVcf(paste0('PATH/TO/FILTERED/SNV/VCFS/',x,'.vcf')))
 # Upload SVs
-load('SV_filtering_DELLY_most_recent.RData')
+SVclust.new <- sapply(names(CD2Mutant), function(x) read.table(paste0('PATH/TO/FILTERED/SV/TABLES/',x,'.tsv')))
 ```
 
 Select only intrachromosomal SVs and merge clusters of SVs
@@ -367,33 +369,62 @@ short.Y <- cbind(rowSums(Y[,1:16]),rowSums(Y[,17:32]),rowSums(Y[,33:48]),rowSums
                  rowSums(Y[,105:106]), rowSums(Y[,107:112]),rowSums(Y[,113:119]))
 ```
 
-BER baplot
+BER and NER baplot
 ```{r}
-pdf('BER_barplots.pdf',6,5)
+pdf('Figure_3b.pdf',10,6)
 f <- barplot(t(rbind(short.Y[names(CD2Mutant)[CD2Mutant== 'N2:0'],,drop = F],
-                short.Y[names(CD2Mutant)[CD2Mutant== 'N2:20'],],
-                short.Y[names(CD2Mutant)[CD2Mutant== 'N2:40'],],
-                rep(0,11),
-                rep(0,11),
-                short.Y[names(CD2Mutant)[CD2Mutant== 'agt-2:0'],,drop = F],
-                short.Y[names(CD2Mutant)[CD2Mutant== 'agt-2:20'],],
-                rep(0,11),
-                rep(0,11),
-                short.Y[names(CD2Mutant)[CD2Mutant== 'ung-1:0'],,drop = F],
-                short.Y[names(CD2Mutant)[CD2Mutant== 'ung-1:20'],],
-                short.Y[names(CD2Mutant)[CD2Mutant== 'ung-1:40'],])),
-        col = c("#2EBAED","#000000","#DE1C14","#D4D2D2","#ADCC54","#F0D0CE",
-                "brown","#8DD3C7","#FFFFB3","#BEBADA","darkmagenta"),
-        xaxt = 'n', las = 2, border = NA, ylim = c(-2,50))
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'N2:20'],],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'N2:40'],],
+                     NA,
+                     NA,
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'agt-2:0'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'agt-2:20'],],
+                     NA,
+                     NA,
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'ung-1:0'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'ung-1:20'],],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'ung-1:40'],],
+                     NA,
+                     NA,
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpa-1:0'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpa-1:20'],],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpa-1:40'],],
+                     NA,
+                     NA,
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpf-1:0'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpf-1:20'],],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpf-1:40'],],
+                     NA,
+                     NA,
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpg-1:1'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpg-1:20'],],
+                     NA,
+                     NA,
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpc-1:0'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpc-1:20'],],
+                     NA,
+                     NA,
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'csb-1:0'],,drop = F],
+                     short.Y[names(CD2Mutant)[CD2Mutant== 'csb-1:20'],])),
+             col = c("#2EBAED","#000000","#DE1C14","#D4D2D2","#ADCC54","#F0D0CE",
+                     "brown","#8DD3C7","#FFFFB3","#BEBADA","darkmagenta"),
+             xaxt = 'n', las = 2, border = NA, ylim = c(-2,50))
 lines(x = rep(f[4] + (f[5]-f[4])/2,2), y = c(-2,30))
 lines(x = rep(f[23] + (f[24]-f[23])/2,2), y = c(-2,40))
 lines(x = rep(f[31] + (f[32]-f[31])/2,2), y = c(-2,40))
 lines(x = rep(f[44] + (f[45]-f[44])/2,2), y = c(-2,40))
 lines(x = rep(f[47] + (f[48]-f[47])/2,2), y = c(-2,40))
+lines(x = rep(f[54] + (f[55]-f[54])/2,2), y = c(-2,40))
+lines(x = rep(f[57] + (f[48]-f[47])/2,2), y = c(-2,40))
+lines(x = rep(f[64] + (f[65]-f[64])/2,2), y = c(-2,40))
+lines(x = rep(f[67] + (f[68]-f[67])/2,2), y = c(-2,40))
+lines(x = rep(f[75] + (f[76]-f[75])/2,2), y = c(-2,40))
+lines(x = rep(f[84] + (f[85]-f[84])/2,2), y = c(-2,40))
+lines(x = rep(f[96] + (f[97]-f[96])/2,2), y = c(-2,40))
 legend('topleft', fill = c("#2EBAED","#000000","#DE1C14","#D4D2D2","#ADCC54","#F0D0CE",
                            "brown","#8DD3C7","#FFFFB3","#BEBADA","darkmagenta"),ncol = 2,
        legend = c('C>A','C>G','C>T','T>A','T>C','T>G','MNV', 
-                  'Del', 'Del/Ins', 'Ins', 'SV'), border = NA, bty = 'n', cex = 0.8)
+                  'Del', 'Del/Ins', 'Ins', 'SV'), border = NA, bty = 'n')
 dev.off()
 ```
 
@@ -402,24 +433,24 @@ BRCA
 pdf('brca_barplots.pdf',10,6)
 f <- barplot(t(rbind(short.Y[names(CD2Mutant)[CD2Mutant== 'ced-3:1'],,drop = F],
                      short.Y[names(CD2Mutant)[CD2Mutant== 'ced-3:20'],],
-                     rep(NA,11),
-                     rep(NA,11),
+                     NA,
+                     NA,
                      short.Y[names(CD2Mutant)[CD2Mutant== 'cep-1:0'],,drop = F],
                      short.Y[names(CD2Mutant)[CD2Mutant== 'cep-1:1'],,drop = F],
                      short.Y[names(CD2Mutant)[CD2Mutant== 'cep-1:20'],],
-                     rep(NA,11),
-                     rep(NA,11),
+                     NA,
+                     NA,
                      short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1:0'],,drop = F],
                      short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1:1'],,drop = F],
                      short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1:20'],],
                      short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1:40'],],
-                     rep(NA,11),
-                     rep(NA,11),
+                     NA,
+                     NA,
                      short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,ced-3:0'],,drop = F],
                      short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,ced-3:1'],,drop = F],
                      short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,ced-3:20'],],
-                     rep(NA,11),
-                     rep(NA,11),
+                     NA,
+                     NA,
                      short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,cep-1:10'],,drop = F],
                      short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,cep-1:20'],])), 
              col = c("#2EBAED","#000000","#DE1C14","#D4D2D2","#ADCC54","#F0D0CE",
@@ -634,4 +665,31 @@ legend('topright', legend = 'significantly different\n from N2 (FDR 5%)', fill =
 dev.off()
 ```
 
+Session information
+
+```{r}
+sessionInfo()
+# R version 3.6.3 (2020-02-29)
+# attached base packages:
+#  [1] grid      stats4    parallel  stats     graphics  grDevices utils     datasets  methods   base     
+# 
+# other attached packages:
+#  [1] reshape2_1.4.3              ggplot2_3.2.1               VariantAnnotation_1.30.1    Rsamtools_2.0.3            
+#  [5] Biostrings_2.52.0           XVector_0.24.0              SummarizedExperiment_1.14.1 DelayedArray_0.10.0        
+#  [9] BiocParallel_1.18.1         matrixStats_0.55.0          Biobase_2.44.0              GenomicRanges_1.36.1       
+# [13] GenomeInfoDb_1.20.0         IRanges_2.18.3              S4Vectors_0.22.1            BiocGenerics_0.30.0        
+# 
+# loaded via a namespace (and not attached):
+#  [1] Rcpp_1.0.2               lattice_0.20-38          prettyunits_1.0.2        assertthat_0.2.1         digest_0.6.22          
+#  [6] R6_2.4.0                 plyr_1.8.4               RSQLite_2.1.2            httr_1.4.1               pillar_1.4.2            
+# [11] zlibbioc_1.30.0          rlang_0.4.5              GenomicFeatures_1.36.4   progress_1.2.2           lazyeval_0.2.2          
+# [16] rstudioapi_0.10          blob_1.2.0               Matrix_1.2-18            stringr_1.4.0            RCurl_1.95-4.12         
+# [21] bit_1.1-14               biomaRt_2.40.5           munsell_0.5.0            compiler_3.6.3           rtracklayer_1.44.4   
+# [26] xfun_0.10                pkgconfig_2.0.3          tidyselect_0.2.5         tibble_2.1.3             GenomeInfoDbData_1.2.1  
+# [31] XML_3.98-1.20            crayon_1.3.4             dplyr_0.8.3              withr_2.1.2              GenomicAlignments_1.20.1
+# [36] bitops_1.0-6             gtable_0.3.0             DBI_1.0.0                magrittr_1.5             scales_1.0.0            
+# [41] stringi_1.4.3            vctrs_0.2.4              tools_3.6.3              bit64_0.9-7              BSgenome_1.52.0         
+# [46] glue_1.3.1               purrr_0.3.3              hms_0.5.3                AnnotationDbi_1.46.1     colorspace_1.4-1        
+# [51] memoise_1.1.0            knitr_1.25 
+```
 

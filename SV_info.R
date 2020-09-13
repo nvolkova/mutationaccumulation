@@ -1,6 +1,51 @@
-# load the table with SVs, available upon request
-load('~/SV_filtering_DELLY_better_clustering_2020.RData')
+################################################################################
+## Collecting and visualising information about SVs in different C. elegans   ##
+## mutation accumulation lines                                                ##
+## N.Volkova, EMBL-EBI, 2019                                                  ##
+################################################################################
 
+# libraries
+library(ggplot2)
+library(reshape2)
+library(rtracklayer)
+library(BSgenome)
+worm_ref_genome <- "BSgenome.Celegans.UCSC.ce11"
+library(worm_ref_genome, character.only = TRUE)
+source('useful_functions.R')
+library(vioplot)
+library(RColorBrewer)
+
+#####################################################################################
+
+# load rearrangements and correct worm names
+
+data <- read.csv("Sample_annotation_table.csv") # table with worm genotypes
+data$Sample <- as.character(data$Sample)
+data$Genotype.new <- as.character(data$Genotype.new)
+data$Code <- as.character(data$Code)
+CD2Mutant <- sapply(data$Code, function(x) {
+  t <- unlist(strsplit(x,split="[:]"))
+  t[t=="NA"] <- ""
+  if (t[4]!="") # mutagen exposure
+    return(paste(t[3],substr(t[4],1,3),t[5],t[7],sep=":")) # genotype, mutagen, dose, experiment type, generation
+  if (t[4]=="") # mutation accumulation
+    return(paste(t[3],t[7],sep=":")) # genotype, experiment type, generation
+})
+names(CD2Mutant) <- data$Sample
+
+#####################################################################################
+
+# load the table with SVs, available upon request
+SVclust.new <- list()
+PATH_TO_SV_TABLES='/path/to/per/sample/tables/with/SVs'
+for (samplename in names(CD2Mutant)) {
+  
+  SVclust.new <- read.table(paste0(PATH_TO_SV_TABLES, '/',samplename,'.tsv'),
+                            sep = '\t', header = T)
+  
+}
+
+# Select genotypes of interest (those with a significant amount of SVs)
 sv.properties <- data.frame(genotype = c('N2', 'atm-1', 'brc-1', 'brc-1,ced-3', 
                                          'brc-1,cep-1', 'dog-1', 'helq-1', 'him-6', 
                                          'him-6,ced-3', 'him-6,cep-1', 'mus-81', 'parp-2', 
@@ -8,8 +53,6 @@ sv.properties <- data.frame(genotype = c('N2', 'atm-1', 'brc-1', 'brc-1,ced-3',
                             total_number = rep(0,18),
                             deletions = rep(0,18),
                             tandem_duplications = rep(0,18),
-                            #svs_with_insertion = rep(0,18), #c(0,0,3,NA,NA,2,4,1,NA,NA,5,NA,1,2,7,5,0,2) - from manual inspection
-                            # svs_with_MH = rep(0,18), # c(1,1,7,NA,NA,5,6,1,NA,NA,16,NA,2,7,5,5,3,1)  - from manual inspection
                             svs_with_Grich = rep(0,18),
                             indels_in_Grich = rep(0,18),
                             total_indels = rep(0,18),
@@ -26,9 +69,9 @@ sv.properties$genotype <- as.character(sv.properties$genotype)
 # GC rich regions
 # from Marsico et al. 2019
 
-library(rtracklayer)
-gc_plus <- import('Celegans_all_w15_th-1_plus.hits.max.PDS.w50.35.bed')
-gc_minus <- import('Celegans_all_w15_th-1_minus.hits.max.PDS.w50.35.bed')
+GCPATH='/path/to/GC/tracks/'
+gc_plus <- import(paste0(GCPATH,'Celegans_all_w15_th-1_plus.hits.max.PDS.w50.35.bed'))
+gc_minus <- import(paste0(GCPATH, 'Celegans_all_w15_th-1_minus.hits.max.PDS.w50.35.bed'))
 seqlevels(gc_plus) <- sapply(seqlevels(gc_plus), function(x) unlist(strsplit(x,split = '[_]'))[2])
 seqlevels(gc_minus) <- sapply(seqlevels(gc_minus), function(x) unlist(strsplit(x,split = '[_]'))[2])
 
@@ -37,20 +80,22 @@ seqlevels(gc_minus) <- sapply(seqlevels(gc_minus), function(x) unlist(strsplit(x
 # Replication directions
 # from Pourkarimi et al. 2016
 
-repTimeN2LPRplus <- import("~/Downloads/GSE90939_RAW/GSM2417785_N2L_Pr_plus.wig.gz", format="WIG")
-repTimeN2LPRminus <- import("~/Downloads/GSE90939_RAW/GSM2417785_N2L_Pr_neg.wig.gz", format="WIG")
-repTimeN2LRRplus <- import("~/Downloads/GSE90939_RAW/GSM2417786_N2L_RR_plus.wig.gz", format="WIG")
-repTimeN2LRRminus <- import("~/Downloads/GSE90939_RAW/GSM2417786_N2L_RR_neg.wig.gz", format="WIG")
+REPPATH='/path/to/reptime/tracks/'
 
-repTimeN2PRplus <- import("~/Downloads/GSE90939_RAW/GSM2417781_N2_Pr_plus.wig.gz", format="WIG")
-repTimeN2PRminus <- import("~/Downloads/GSE90939_RAW/GSM2417781_N2_Pr_neg.wig.gz", format="WIG")
-repTimeN2RRplus <- import("~/Downloads/GSE90939_RAW/GSM2417782_N2_RR_plus.wig.gz", format="WIG")
-repTimeN2RRminus <- import("~/Downloads/GSE90939_RAW/GSM2417782_N2_RR_neg.wig.gz", format="WIG")
+repTimeN2LPRplus <- import(paste0(REPPATH, '/', "GSE90939_RAW/GSM2417785_N2L_Pr_plus.wig.gz"), format="WIG")
+repTimeN2LPRminus <- import(paste0(REPPATH, '/', "GSE90939_RAW/GSM2417785_N2L_Pr_neg.wig.gz"), format="WIG")
+repTimeN2LRRplus <- import(paste0(REPPATH, '/', "GSE90939_RAW/GSM2417786_N2L_RR_plus.wig.gz"), format="WIG")
+repTimeN2LRRminus <- import(paste0(REPPATH, '/', "GSE90939_RAW/GSM2417786_N2L_RR_neg.wig.gz"), format="WIG")
 
-repTimeegl30PRplus <- import("~/Downloads/GSE90939_RAW/GSM2417783_egl30_Pr_plus.wig.gz", format="WIG")
-repTimeegl30PRminus <- import("~/Downloads/GSE90939_RAW/GSM2417783_egl30_Pr_neg.wig.gz", format="WIG")
-repTimeegl30RRplus <- import("~/Downloads/GSE90939_RAW/GSM2417784_egl30_RR_plus.wig.gz", format="WIG")
-repTimeegl30RRminus <- import("~/Downloads/GSE90939_RAW/GSM2417784_egl30_RR_neg.wig.gz", format="WIG")
+repTimeN2PRplus <- import(paste0(REPPATH, '/', "GSE90939_RAW/GSM2417781_N2_Pr_plus.wig.gz"), format="WIG")
+repTimeN2PRminus <- import(paste0(REPPATH, '/', "GSE90939_RAW/GSM2417781_N2_Pr_neg.wig.gz"), format="WIG")
+repTimeN2RRplus <- import(paste0(REPPATH, '/', "GSE90939_RAW/GSM2417782_N2_RR_plus.wig.gz"), format="WIG")
+repTimeN2RRminus <- import(paste0(REPPATH, '/', "GSE90939_RAW/GSM2417782_N2_RR_neg.wig.gz"), format="WIG")
+
+repTimeegl30PRplus <- import(paste0(REPPATH, '/', "GSE90939_RAW/GSM2417783_egl30_Pr_plus.wig.gz"), format="WIG")
+repTimeegl30PRminus <- import(paste0(REPPATH, '/', "GSE90939_RAW/GSM2417783_egl30_Pr_neg.wig.gz"), format="WIG")
+repTimeegl30RRplus <- import(paste0(REPPATH, '/', "GSE90939_RAW/GSM2417784_egl30_RR_plus.wig.gz"), format="WIG")
+repTimeegl30RRminus <- import(paste0(REPPATH, '/', "GSE90939_RAW/GSM2417784_egl30_RR_neg.wig.gz"), format="WIG")
 
 
 # Replication fork directionality
@@ -82,15 +127,14 @@ seqlevels(repStrand) <- sub("chr","", seqlevels(repStrand))
 # Repetitive regions
 # from www.girinst.org/downloads/repeatmaps/C.Elegans
 
-library(BSgenome)
-worm_ref_genome <- "BSgenome.Celegans.UCSC.ce11"
-library(worm_ref_genome, character.only = TRUE)
-repeat.table <- do.call('rbind', lapply(c('~/Downloads/CEmapI.gz',
-                                          '~/Downloads/CEmapII.gz',
-                                          '~/Downloads/CEmapIII.gz',
-                                          '~/Downloads/CEmapIV.gz',
-                                          '~/Downloads/CEmapV.gz',
-                                          '~/Downloads/CEmapX.gz'),read.table,header=F))
+REPEATS='/path/to/downloaded/repetitive/region/tracks/'
+repeat.table <- do.call('rbind', lapply(paste0(REPEATS,'/',
+                                               c('CEmapI.gz',
+                                                 'CEmapII.gz',
+                                                 'CEmapIII.gz',
+                                                 'CEmapIV.gz',
+                                                 'CEmapV.gz',
+                                                 'CEmapX.gz')),read.table,header=F))
 head(repeat.table)
 colnames(repeat.table) <- c('Chromosome', 'Start_on_chrom', 'End_on_chrom', 
                             'Name_of_similar_in_Repbase', 'Start_RepBase','End_RepBase',
@@ -113,21 +157,21 @@ seqlevels(repeat.table.ranges) <- substr(as.character(seqlevels(repeat.table.ran
 ########################################################################################
 
 # Subtelomeric regions
-WBcel235 <- readDNAStringSet("~/Desktop/C. elegans WB235/Caenorhabditis_elegans.WBcel235.dna.toplevel.fa") # get worm reference genome
+WBcel235 <- getSeq(BSgenome.Celegans.UCSC.ce11)
 chr_sizes <- width(WBcel235)
-names(chr_sizes) <- c("I","II","III","IV","MtDNA","V","X")
+names(chr_sizes) <- c("I","II","III","IV","V","X","MtDNA")
 genome_size = sum(as.numeric(chr_sizes))
-# telomeres
+# consider 200 bp on each side telomeric, and up to 16kbp from the ends - subtelomeric
 subtelomere <- matrix(1,nrow=6,ncol=4,dimnames=list(c("I","II","III","IV","V","X"),c("l.start","l.end","r.start","r.end")))
 subtelomere[,1] <- rep(200,1)
 subtelomere[,2] <- rep(16000,1)
-subtelomere[,3] <- chr_sizes[-5] - 16000
-subtelomere[,4] <- chr_sizes[-5] - 200
+subtelomere[,3] <- chr_sizes[-7] - 16000
+subtelomere[,4] <- chr_sizes[-7] - 200
 
 ########################################################################################
 
 # Go through all samples
-endings <- c(":5",":6",":10",":20",":15",":40")
+endings <- c(":5",":6",":10",":20",":15",":40") # different generations
 
 replication_tables_td <- list()
 replication_tables_del <- list()
@@ -415,13 +459,16 @@ for (gene in c(sv.properties$genotype, 'rev-3', 'polh-1', 'polh(lf31)-1')) {
   indmhlist[[gene]] <- blist
   print(gene)
 }  
+
+#############################visualize######################################################
+
 par(mar = c(6,4,2,2))  
 boxplot(mhlist, las = 2)
 plot(sapply(mhlist, function(x) sum(x>0)) / c(sv.properties$total_number,5,5), xaxt = 'n', 
      ylab = 'Proportion of SVs', xlab ='', pch = 16)
 axis(side = 1, at = c(1:17), labels = names(mhlist), las = 2, font = 3, lty = 0)
 
-library(vioplot)
+
 pdf('MH_at_SV_bps.pdf', 7,5)
 vioplot(mhlist, las = 2, frame = NA, xaxt = 'n', ylab = 'MH length, bp', yaxt = 'n', frame.plot = F, plotCentre='line', main = 'Microhomology length at SV breakpoints')
 axis(side = 2, at = c(0:13), las = 2)
@@ -481,9 +528,7 @@ axis(side = 1, at = c(1:18), labels = names(indmhlist), las = 2, font = 3, lty =
 (sapply(0:28, function(x) (x+1) * (1/4)**x * (3/4)**2)) -> prblty
 
 
-#############################visualize######################################################
-
-head(sv.properties)
+#############################other plots######################################################
 
 plot(sv.properties$total_number, bty = 'n', xaxt = 'n', ylab = 'Number of SVs', xlab = '', pch = 16)
 axis(side = 1, at = c(1:15), las = 2, labels = sv.properties$genotype, lty = 0, tick = F, tck = 0.01, font = 3)
@@ -572,14 +617,12 @@ dev.off()
 
 ############################################################
 
-# re-do the plots of TD and DEL size distribution
+# plots of TD and DEL size distribution
 
 # tandem duplications
 log_td_size <- lapply(td_size, log10)
 names(log_td_size) <- names(td_size)
 pdf('new_sizes_of_TDs_Feb2020.pdf',8,6)
-library(vioplot)
-library(RColorBrewer)
 par(mar = c(9,6,2,2))
 vioplot(x = log_td_size, col = brewer.pal(7,'Pastel1')[1], frame = NA, xaxt = 'n', yaxt = 'n', frame.plot = F, ylim = c(2,7), plotCentre='line')
 for (j in 1:length(td_size))
@@ -593,7 +636,6 @@ del_size <- del_size[sapply(del_size, length)>0]
 log_td_size <- lapply(del_size, log10)
 names(log_td_size) <- names(del_size)
 pdf('new_sizes_of_DELs_Feb2020.pdf',8,6)
-library(vioplot)
 par(mar = c(9,6,2,2))
 vioplot(x = log_td_size, col = brewer.pal(7,'Pastel1')[3], frame = NA, xaxt = 'n', yaxt = 'n', frame.plot = F, ylim = c(2,6), plotCentre='line')
 for (j in 1:length(del_size)) {
@@ -604,3 +646,31 @@ for (j in 1:length(del_size)) {
 axis(side = 1, las = 2, labels = print_names[sapply(names(del_size), function(x) grep(x,names(print_names))[1])], font = 3, at = 1:length(del_size), lty = 0)
 axis(side = 2, las = 2, at = c(2:6), labels = c('100 bps', '1 kbps', '10 kbps', '100 kbps', '1 Mbps'))
 dev.off()
+
+######## session information ########
+# R version 3.6.3 (2020-02-29)
+# attached base packages:
+#   [1] parallel  stats4    stats     graphics  grDevices utils     datasets  methods   base     
+# 
+# other attached packages:
+#   [1] VariantAnnotation_1.30.1          Rsamtools_2.0.3                   SummarizedExperiment_1.14.1      
+# [4] DelayedArray_0.10.0               BiocParallel_1.18.1               matrixStats_0.55.0               
+# [7] Biobase_2.44.0                    BSgenome.Celegans.UCSC.ce11_1.4.2 BSgenome_1.52.0                  
+# [10] Biostrings_2.52.0                 XVector_0.24.0                    rtracklayer_1.44.4               
+# [13] GenomicRanges_1.36.1              GenomeInfoDb_1.20.0               IRanges_2.18.3                   
+# [16] S4Vectors_0.22.1                  BiocGenerics_0.30.0               reshape2_1.4.3                   
+# [19] ggplot2_3.2.1                    
+
+# loaded via a namespace (and not attached):
+#   [1] Rcpp_1.0.2               lattice_0.20-38          prettyunits_1.0.2        assertthat_0.2.1         digest_0.6.22           
+# [6] R6_2.4.0                 plyr_1.8.4               RSQLite_2.1.2            evaluate_0.14            httr_1.4.1              
+# [11] pillar_1.4.2             progress_1.2.2           zlibbioc_1.30.0          rlang_0.4.5              GenomicFeatures_1.36.4  
+# [16] lazyeval_0.2.2           rstudioapi_0.10          blob_1.2.0               Matrix_1.2-18            rmarkdown_1.16          
+# [21] stringr_1.4.0            biomaRt_2.40.5           RCurl_1.95-4.12          bit_1.1-14               munsell_0.5.0           
+# [26] compiler_3.6.3           xfun_0.10                pkgconfig_2.0.3          htmltools_0.4.0          tidyselect_0.2.5        
+# [31] tibble_2.1.3             GenomeInfoDbData_1.2.1   XML_3.98-1.20            crayon_1.3.4             dplyr_0.8.3             
+# [36] withr_2.1.2              GenomicAlignments_1.20.1 bitops_1.0-6             grid_3.6.3               gtable_0.3.0            
+# [41] DBI_1.0.0                magrittr_1.5             scales_1.0.0             stringi_1.4.3            vctrs_0.2.4             
+# [46] tools_3.6.3              bit64_0.9-7              glue_1.3.1               purrr_0.3.3              hms_0.5.3               
+# [51] yaml_2.2.0               AnnotationDbi_1.46.1     colorspace_1.4-1         memoise_1.1.0            knitr_1.25 
+

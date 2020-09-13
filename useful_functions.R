@@ -3,61 +3,14 @@
 ##### January 2016 - ... , EMBL-EBI, N.Volkova (nvolkova@ebi.ac.uk)        #####
 ################################################################################
 
-round_dataframe <- function(df, n = 2) {
-  
-  inds <- which(sapply(df,is.numeric))
-  
-  for (j in inds) df[,j] <- round(df[,j],n)
-  
-  return(df)
-  
-}
+library(VariantAnnotation)
 
-lenght <- function(x) {
-  message("Learn to spell it properly!")
-  return(length(x))
-}
-
-top <- function(x,n) {
-  return(sort(x,decreasing=T)[1:n])
-}
-which.top <- function(x,n) {
-  if (is.null(names(x))) return(order(x,decreasing=T)[1:n])
-  return(names(x)[order(x,decreasing=T)][1:n])
-}
-
-bottom <- function(x,n) {
-  return(sort(x,decreasing=F)[1:n])
-}
-which.bottom <- function(x,n) {
-  if (is.null(names(x))) return(order(x,decreasing=F)[1:n])
-  return(names(x)[order(x,decreasing=F)][1:n])
-}
-
+# calculate cosine similarity to compare mutational signatures
 cosine <- function(x,y) {
     return(sum(x * y) / sqrt(sum(x**2)) / sqrt(sum(y**2)))
 }
 
-divergence <- function (a,b) {
-  return (sum(a * log ( (a+.Machine$double.eps)/(b + .Machine$double.eps)) - a + b))
-}
-
-KL <- function(p,q) {
-  return(sum(p * log2((p+0.001)/(q+0.001))))
-}
-
-JSdistance <- function(p,q) {
-  M = 0.5*(p+q)
-  return (sqrt(0.5*KL(p,M) + 0.5*KL(q,M)))
-}
-
-restore <- function(x) {
-  t1 <- unlist(strsplit(x, split = '[:]'))
-  t2 <- c(t1[1],unlist(strsplit(t1[2], split = '[_]')))
-  t3 <- c(t2[1:2],unlist(strsplit(t2[3], split = '[/]')))
-  return(t3)
-}
-
+# Function for reading a list of potentially absent VCF files without stopping
 read_ce_vcf <- function(file, genome = "WBcel235") {
   out <- tryCatch(
     {
@@ -81,48 +34,12 @@ read_ce_vcf <- function(file, genome = "WBcel235") {
   return(out)
 }
 
-combination_check <- function(x,y) {
-  objective <- function(l) {
-    return(-as.numeric(cosine(y,x %*% t(t(l)))))
-  }
-  return(optim(par = rep(1,ncol(x)), objective, lower=rep(0,ncol(x))))
-}
-
-divergence <- function (a,b) {
-  return (a * log ( (a+.Machine$double.eps)/(b + .Machine$double.eps)) - a + b)
-}
-
-# supplementary functions
-poisl <- function(X, theta, Y){
-  Yp <- X %*% theta
-  Y %*% log(Yp) - sum(Yp) - sum(log(factorial(Y)))
-}
-poisdl <- function(X, theta, Y){
-  lambda <- as.numeric(X %*% theta)
-  t(Y / lambda - 1) %*% X
-}
-poisI <- function(X, theta, Y){
-  lambda <- as.numeric(X %*% theta)
-  t(Y/lambda^2 * X) %*% X
-}
-poisL <- function(X, theta, Y){
-  Yp <- X %*% theta
-  prod(exp(-Yp)) * prod(Yp**Y) / prod(factorial(Y))
-}
-
+# Reverse complement
 RevCom <- function(x) {
   return(as.character(reverseComplement(DNAString(x))))
 }
 
-plot_all_changes <- function(plot_fc,S_est,beta_est,n = F) {
-  to.show <- data.frame(t(S_est))
-  for (j in 1:nrow(beta_est)) {
-    to.show <- cbind(to.show, S_est[nrow(S_est),] * exp(beta_est[j,]))
-  }
-  colnames(to.show) <- c(paste0('Sig',1:nrow(S_est)), paste0('Sig*beta',1:nrow(beta_est)))
-  plot_fc(to.show, norm = n)
-}
-
+# plot grnomic ranges
 plotRanges <- function(x, xlim = x, main = deparse(substitute(x)), col = "black", sep = 0.5, ...)
 {
   height <- 1
@@ -137,6 +54,7 @@ plotRanges <- function(x, xlim = x, main = deparse(substitute(x)), col = "black"
   axis(1)
 }
 
+# Collect trinucleotide context for base substitutions in C. elegans
 getTrinucleotideSubs <- function(vcf, ref_genome="BSgenome.Celegans.UCSC.ce11") {
   seqlevels(vcf) <- seqnames(get(ref_genome))
   if (ref_genome==worm_ref_genome)
@@ -153,54 +71,7 @@ getTrinucleotideSubs <- function(vcf, ref_genome="BSgenome.Celegans.UCSC.ce11") 
   return(s)
 }
 
-getTrinucleotideSubs_human_table <- function(subs, ref_genome = 'BSgenome.Hsapiens.UCSC.hg19', chr = 0) {
-  g = get(ref_genome)
-  if (is.na(subs)) return(NA)
-  if (chr) subs <- subs[subs$Chrom != "chrM",] else subs <- subs[subs$Chrom != "MT",]
-  if (nrow(subs)==0) return(NA)
-  if (chr)
-    tnc = as.character(getSeq(g, subs$Chrom, subs$Pos - 1, subs$Pos + 1))
-  else
-    tnc = as.character(getSeq(g, paste('chr',subs$Chrom,sep=''), 
-                            subs$Pos - 1, subs$Pos + 1))
-  s <- paste0(substr(tnc,1,1),"[",as.character(subs$Ref), ">",
-              as.character(subs$Alt),"]", substr(tnc,3,3))
-  n <- c("A","C","G","T")
-  f <- paste0(rep(n, each=4), "[", 
-              rep(n, each=96/2), ">", 
-              c(rep(c("C","G","T"), each=16),
-                rep(c("A","G","T"), each=16),
-                rep(c("A","C","T"), each=16), 
-                rep(c("A","C","G"), each=16)),
-              "]", n)
-  s <- factor(s, levels=f)
-  return(s)
-}
-
-getPentanucleotideSubs_human_table <- function(subs, ref_genome = 'BSgenome.Hsapiens.UCSC.hg19') {
-  g = get(ref_genome)
-  if (is.na(subs)) return(NA)
-  subs <- subs[subs$Chrom != "MT",]
-  if (nrow(subs)==0) return(NA)
-  tnc = as.character(getSeq(g, paste('chr',subs$Chrom,sep=''), 
-                            subs$Pos - 2, subs$Pos + 2))
-  s <- paste0(substr(tnc,1,2),"[",as.character(subs$Ref), ">",
-              as.character(subs$Alt),"]", substr(tnc,4,5))
-  n <- c("A","C","G","T")
-  f <- paste0(rep(n, each=64), 
-              rep(n, each=16),
-              "[", 
-              rep(n, each=1536/2),
-              ">", 
-              c(rep(c("C","G","T"), each=256),
-                rep(c("A","G","T"), each=256),
-                rep(c("A","C","T"), each=256), 
-                rep(c("A","C","G"), each=256)),
-              "]", rep(n, each = 4), n)
-  s <- factor(s, levels=f)
-  return(s)
-}
-
+# Change `getTrinucleotideSubs` output to pyrimidine reference
 tncToPyrimidine <- function(nucl) {
   ind <- sort(c(grep('[G',nucl,fixed = T),grep('[A',nucl,fixed = T)))
   newnucl <- as.character(reverseComplement(DNAStringSet(paste(substr(nucl[ind],1,1),
@@ -214,24 +85,13 @@ tncToPyrimidine <- function(nucl) {
   return(nucl)
 }
 
+# make a reverse complement of a substitution type name
 RevComMutType <- function(nucl) {
   tmp <- unlist(strsplit(nucl, split = ''))
   return(paste0(RevCom(tmp[7]),'[',RevCom(tmp[3]),'>',RevCom(tmp[5]),']',RevCom(tmp[1])))
 }
 
-pncToPyrimidine <- function(nucl) {
-  ind <- sort(c(grep('[G',nucl,fixed = T),grep('[A',nucl,fixed = T)))
-  newnucl <- as.character(reverseComplement(DNAStringSet(paste(substr(nucl[ind],1,2),
-                                                               substr(nucl[ind],6,6),
-                                                               substr(nucl[ind],4,4),
-                                                               substr(nucl[ind],8,9),sep=''))))
-  nucl[ind] <- paste(substr(newnucl,1,2),'[',
-                     substr(newnucl,3,3),'>',
-                     substr(newnucl,4,4),']',
-                     substr(newnucl,5,6),sep='')
-  return(nucl)
-}
-
+# collect the contexts of DNV mutations
 get_DNV_type <- function(vcf, ref_genome="BSgenome.Celegans.UCSC.ce11", dnv.types) {
   s <- paste0(paste(as.character(ref(vcf)),collapse=''), ">", paste(as.character(unlist(alt(vcf))), collapse=''))
   if (!(s %in% dnv.types)) {
@@ -241,12 +101,14 @@ get_DNV_type <- function(vcf, ref_genome="BSgenome.Celegans.UCSC.ce11", dnv.type
   return(s)
 }
 
+# check if a variant belongs to multi-nucleotide variant
 isMNV <- function(vcf) {
   d <- diff(start(vcf)) == 1 & abs(diff(geno(vcf)$PM[,"TUMOUR"] )) <= 0.05
   w <- c(FALSE, d) | c(d, FALSE)
   return(w)
 }
 
+# check if a variant is within a repeat (i.e. if the deleted/inserted content is repeated upstream/downstream at least twice)
 is.in.repeat <- function(vcf, ref_genome="BSgenome.Celegans.UCSC.ce11") {
   seqlevels(vcf) <- c("chrM","chrIV","chrIII","chrX","chrI","chrV","chrII")
   vcf <- vcf[as.character(seqnames(vcf)) != "chrM"]
@@ -266,6 +128,7 @@ is.in.repeat <- function(vcf, ref_genome="BSgenome.Celegans.UCSC.ce11") {
   return(in.repeat)
 }
 
+# reduce a set of genomic ranges to a minimum overlap
 min_ranges <- function(gr) {
   if (length(gr) == 1) return(gr)
   to.merge <- 1
@@ -300,9 +163,11 @@ min_ranges <- function(gr) {
   return(gr)
 }
 
+# check if genomic ranges overlap up to 50/90%
 `%over.50%` <- function(query, subject) overlapsAny(query, subject, minoverlap = 0.5 * min(width(query),width(subject)))
 `%over.90%` <- function(query, subject) overlapsAny(query, subject, minoverlap = 0.9 * min(width(query),width(subject)))
 
+# check whether the breakpoints in a table of SVs are duplicated
 duplicated.breakpoints <- function(SV) {
   
   dupl <- rep(FALSE, nrow(SV))
@@ -335,6 +200,7 @@ duplicated.breakpoints <- function(SV) {
   return(dupl)
 }
 
+# function for filtering SVs in a table versus a reference set of variants
 filter.breakpoints <- function(SV, reference) {
   
   reference$CHR1 <- as.character(reference$CHR1)
@@ -370,6 +236,7 @@ filter.breakpoints <- function(SV, reference) {
   return(SV)
 }
 
+# function to save a list of GGplots into one PDF file
 GG_save_pdf = function(list, filename, ...) {
   #start pdf
   pdf(filename, ...)

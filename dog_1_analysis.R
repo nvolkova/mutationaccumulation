@@ -1,140 +1,51 @@
-library(rtracklayer)
+#######################################################################
+# a script to generate a distribution of variants in dog-1 mutations  #
+# N. Volkova, EMBL-EBI, 2019                                          #
+# for Meier et al. publication on DNA repair signatures in C. elegans #
+#######################################################################
 
+library(rtracklayer)
+library(VariantAnnotation)
+
+#####################################################################################
+
+# load rearrangements and correct worm names
+
+data <- read.csv("Sample_annotation_table.csv") # table with worm genotypes
+data$Sample <- as.character(data$Sample)
+data$Genotype.new <- as.character(data$Genotype.new)
+data$Code <- as.character(data$Code)
+CD2Mutant <- sapply(data$Code, function(x) {
+  t <- unlist(strsplit(x,split="[:]"))
+  t[t=="NA"] <- ""
+  if (t[4]!="") # mutagen exposure
+    return(paste(t[3],substr(t[4],1,3),t[5],t[7],sep=":")) # genotype, mutagen, dose, experiment type, generation
+  if (t[4]=="") # mutation accumulation
+    return(paste(t[3],t[7],sep=":")) # genotype, experiment type, generation
+})
+names(CD2Mutant) <- data$Sample
+
+#####################################################################################
+
+# load mutations
+PATHTOSUBSVCF='/path/to/filtered/substitution/vcfs'
+PATHTOINDELSVCF='/path/to/filtered/indel/vcfs'
+PATHTOSV='/path/to/filtered/SV/tables'
+indels_dedup <- sapply(data$Sample[data$Genotype.new == 'dog-1'], function(x) readVcf(paste0(PATHTOSUBSVCF,'/',x,'.vcf')))
+vcfs_dedup <- sapply(data$Sample[data$Genotype.new == 'dog-1'], function(x) readVcf(paste0(PATHTOINDELSVCF,'/',x,'.vcf')))
+SVclust.new <- sapply(data$Sample[data$Genotype.new == 'dog-1'], function(x) readVcf(paste0(PATHTOSV,'/',x,'.vcf')))
+
+#####################################################################################
+
+# load GC tracks from Marsico et al. 2019
 gc_plus <- import('~/Downloads/Celegans_all_w15_th-1_plus.hits.max.PDS.w50.35.bed')
 gc_minus <- import('~/Downloads/Celegans_all_w15_th-1_minus.hits.max.PDS.w50.35.bed')
 seqlevels(gc_plus) <- sapply(seqlevels(gc_plus), function(x) unlist(strsplit(x,split = '[_]'))[2])
 seqlevels(gc_minus) <- sapply(seqlevels(gc_minus), function(x) unlist(strsplit(x,split = '[_]'))[2])
 
-# intersect dog-1 variants with it
-
-lapply(indels_dedup[names(CD2Mutant)[CD2Mutant == 'brc-1:20']], granges) -> a
-
-allindels <- c(a[[1]],a[[2]],a[[3]],a[[4]],a[[5]],a[[6]])
-
-lapply(vcfs_dedup[names(CD2Mutant)[CD2Mutant == 'brc-1:20']], granges) -> a
-
-allsubs <-  c(a[[1]],a[[2]],a[[3]],a[[4]],a[[5]],a[[6]])
-
-#allindels <- allindels[info(allindels)$LEN>=50]
-
-replication_tables_td <- list()
-replication_tables_del <- list()
-endings <- c(":0",":1",":5",":6",":10",":20",":15",":40")
-
-for (gene in names(print_names)) {
-
-  sv <- do.call('rbind',SVclust.new[names(CD2Mutant)[CD2Mutant %in% paste0(gene, endings)]])
-  del.sv <- sv[sv$clust.type == 'DEL',]
-  del.sv.ranges <- GRanges(seqnames = del.sv$CHR1, ranges = IRanges(start = del.sv$POS1, end = del.sv$POS2))
-  td.sv <- sv[sv$clust.type == 'TD',]
-  td.sv.ranges <- GRanges(seqnames = td.sv$CHR1, ranges = IRanges(start = td.sv$POS1, end = td.sv$POS2))
-  
-  if (length(td.sv.ranges)>0) {
-    orientation <- list()
-    for (j in 1:length(td.sv.ranges)) {
-      orientation[[j]] <- c(as.character(strand(repStrand)[subjectHits(findOverlaps(query = td.sv.ranges[j], subject = repStrand))[1]]),
-                            as.character(strand(repStrand)[subjectHits(findOverlaps(query = td.sv.ranges[j], subject = repStrand))[length(subjectHits(findOverlaps(query = td.sv.ranges[j], subject = repStrand)))]]))
-    }
-    replication_tables_td[[gene]] <- do.call('rbind',orientation)
-  }
-  
-  if (length(del.sv.ranges)>0) {
-    orientation <- list()
-    for (j in 1:length(del.sv.ranges)) {
-      orientation[[j]] <- c(as.character(strand(repStrand)[subjectHits(findOverlaps(query = del.sv.ranges[j], subject = repStrand))[1]]),
-                            as.character(strand(repStrand)[subjectHits(findOverlaps(query = del.sv.ranges[j], subject = repStrand))[length(subjectHits(findOverlaps(query = del.sv.ranges[j], subject = repStrand)))]]))
-    }
-    replication_tables_del[[gene]] <- do.call('rbind',orientation)
-  }
-
-  print(gene)
-}
-
-pv <- list()
-for (gene in names(replication_tables_td)) {
-  
-  tmp <- c(0,0,0)
-  names(tmp) <- c('+','-','*')
-  tmp[names(table(replication_tables_td[[gene]]))] <-  table(replication_tables_td[[gene]])
-  
-  if (sum(tmp['+'] + tmp['-'])>0) {
-    if (tmp['+']>0)
-      pv[[gene]] <- prop.test(tmp['+'], n = tmp['+'] + tmp['-'], p = 0.5)$p.value
-    else 
-      pv[[gene]] <- prop.test(tmp['-'], n = tmp['+'] + tmp['-'], p = 0.5)$p.value
-  }
-}
-which(unlist(pv)<0.05)
-which(p.adjust(unlist(pv), method = 'BH')<0.05)
-
-pv <- list()
-for (gene in names(replication_tables_del)) {
-  
-  tmp <- c(0,0,0)
-  names(tmp) <- c('+','-','*')
-  tmp[names(table(replication_tables_del[[gene]]))] <-  table(replication_tables_del[[gene]])
-  
-  if (sum(tmp['+'] + tmp['-'])>0) {
-    if (tmp['+']>0)
-      pv[[gene]] <- prop.test(tmp['+'], n = tmp['+'] + tmp['-'], p = 0.5)$p.value
-    else 
-      pv[[gene]] <- prop.test(tmp['-'], n = tmp['+'] + tmp['-'], p = 0.5)$p.value
-  }
-}
-which(unlist(pv)<0.05)
-which(p.adjust(unlist(pv), method = 'BH')<0.05)
-
-
-
-#########################
-hits_plus <- findOverlaps(query = c(granges(allindels),granges(allsubs),sv), subject = gc_plus)
-hits_minus <- findOverlaps(query = c(granges(allindels),granges(allsubs),sv), subject = gc_minus)
-length(unique(c(queryHits(hits_plus),queryHits(hits_minus))))
-# 113 out of 181 total
-# 109 out of 139 longer than 50 bp
-hits_plus <- findOverlaps(query = sv, subject = gc_plus)
-hits_minus <- findOverlaps(query = sv, subject = gc_minus)
-length(unique(c(queryHits(hits_plus),queryHits(hits_minus))))
-# 17 out of 21
-
-
-lapply(indels_dedup[names(CD2Mutant)[CD2Mutant %in% c("N2:1","N2:40","N2:20")]], granges) -> a
-lapply(indels_dedup[names(CD2Mutant)[CD2Mutant %in% c("dog-1:1","dog-1:40","dog-1:20")]], granges) -> b
-lapply(indels_dedup[names(CD2Mutant)[CD2Mutant %in% c("him-6:1","him-6:40","him-6:20")]], granges) -> c
-lapply(indels_dedup[names(CD2Mutant)[CD2Mutant %in% c("atm-1:1","atm-1:40","atm-1:20")]], granges) -> d
-res <- c(sum(sapply(a, function(x) length(unique(c(queryHits(findOverlaps(query = granges(x), subject = gc_plus)),
-                                                      queryHits(findOverlaps(query = granges(x), subject = gc_minus)))))))/ 
-              sum(sapply(a,length)),
-            sum(sapply(b, function(x) length(unique(c(queryHits(findOverlaps(query = granges(x), subject = gc_plus)),
-                                                          queryHits(findOverlaps(query = granges(x), subject = gc_minus)))))))/ 
-              sum(sapply(b,length)),
-            sum(sapply(c, function(x) length(unique(c(queryHits(findOverlaps(query = granges(x), subject = gc_plus)),
-                                                          queryHits(findOverlaps(query = granges(x), subject = gc_minus)))))))/ 
-              sum(sapply(c,length)),
-            sum(sapply(d, function(x) length(unique(c(queryHits(findOverlaps(query = granges(x), subject = gc_plus)),
-                                                          queryHits(findOverlaps(query = granges(x), subject = gc_minus)))))))/ 
-              sum(sapply(d,length)))
-
-plot(res, ylim = c(0,1), pch = 16)
-allmean <- sum(width(c(gc_minus,gc_plus))) / sum(chr_lens)
-allsd <- sqrt(sum(width(c(gc_minus,gc_plus))) / sum(chr_lens) * (1 - sum(width(c(gc_minus,gc_plus))) / sum(chr_lens)))
-for (j in 1:4) {
-  points(x = j, y = allmean, col = 'grey', pch = 16)
-  lines(x = c(j,j), y = c(allmean - 2*allsd, allmean + 2*allsd), col = 'grey', lwd = 1)
-}
-
-for (j in 2:length(a)) {
-  allindels <- c(allindels,a[[j]])
-}
-hits_plus <- findOverlaps(query = granges(allindels), subject = gc_plus)
-hits_minus <- findOverlaps(query = granges(allindels), subject = gc_minus)
-length(unique(c(queryHits(hits_plus),queryHits(hits_minus)))) / length(allindels)
-
-
-#########################
+#####################################################################################
 
 intnames <- names(CD2Mutant)[CD2Mutant == 'dog-1:20']
-#intnames <- names(CD2Mutant)[grep('brc-1,cep-1',CD2Mutant)]
 clrs <- c("#2EBAED","#000000","#DE1C14","#D4D2D2","#ADCC54","#F0D0CE","brown","#8DD3C7","#FFFFB3","#BEBADA")
 names(clrs) <- c('C>A','C>G','C>T','T>A','T>C','T>G','DNV','D','DI','I')
 
