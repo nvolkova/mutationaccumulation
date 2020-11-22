@@ -12,30 +12,27 @@ source('useful_functions.R')
 source('plotting_functions.R')
 library(ggplot2)
 library(reshape2)
+library(openxlsx)
 ```
 
 Read sample annotation
 ```{r}
-data <- read.csv("Sample_annotation_table.csv")
+data <- read.xlsx("data/MA_paper_supplementary_table_1.xlsx", sheet = 2)
 data$Sample <- as.character(data$Sample)
-data$Genotype.new <- as.character(data$Genotype.new)
-data$Code <- as.character(data$Code)
-CD2Mutant <- sapply(data$Code, function(x) {
-  t <- unlist(strsplit(x,split="[:]"))
-  t[t=="NA"] <- ""
-  return(paste(t[3],t[7],sep=":")) # genotype, experiment type, generation
-}) # short notations
-names(CD2Mutant) <- data$Sample
+data$Genotype <- as.character(data$Genotype)
+data$Code <- paste0(data$Genotype,':', data$Generation, sep = '')
+# remove reference sample from further analysis
+data <- data[-match('CD0001b',data$Sample),]
 ```
 
 Read the VCF lists with base substitutions, indels and SVs
 ```{r}
 # Upload indels
-indels_dedup <- sapply(names(CD2Mutant), function(x) readVcf(paste0('PATH/TO/FILTERED/INDEL/VCFS/',x,'.vcf')))
+indels_dedup <- sapply(data$Sample, function(x) readVcf(paste0('PATH/TO/FILTERED/INDEL/VCFS/',x,'.vcf')))
 # Upload subs
-vcfs_dedup <- sapply(names(CD2Mutant), function(x) readVcf(paste0('PATH/TO/FILTERED/SNV/VCFS/',x,'.vcf')))
+vcfs_dedup <- sapply(data$Sample, function(x) readVcf(paste0('PATH/TO/FILTERED/SNV/VCFS/',x,'.vcf')))
 # Upload SVs
-SVclust.new <- sapply(names(CD2Mutant), function(x) read.table(paste0('PATH/TO/FILTERED/SV/TABLES/',x,'.tsv')))
+SVclust.new <- sapply(data$Sample, function(x) read.table(paste0('PATH/TO/FILTERED/SV/TABLES/',x,'.tsv')))
 ```
 
 Select only intrachromosomal SVs and merge clusters of SVs
@@ -72,108 +69,19 @@ names(chr_lens) <- c('I','II','III','IV','V','X')
 df <- data.frame(name = names(chr_lens), length = chr_lens)
 ```
 
-Function to check clustering the genome. We assessed it using the start points of all the base substitutions and indels across the samples of the same genotype and generation.
+Function to check clustering the genome. We assessed it using the start points of all the base substitutions and indels across the samples of the same genotype and generation. The function checks if a variant has another base change or indel within 100 bp from it and assigns a clustered status if so.
 
-Clustered status was assigned based on a hidden Markov model which predicts a series of $M$ hidden states $H=\{H_m\}_{m=1}^{M}$, $H_m \in \{\text{clust},\text{not}\}$ (being in a cluster or not) for all mutations within a sample based on the set of distance to the next mutation $D=\{D_m\}_{m=1}^{M-1}$, $D_m \in \mathbb{N}$ (the last mutation in each chromosome is assumed to be fixed in non-clustered state). The probability of a set of states given the observed distances would then be calculated as
-\[P(H_{1:M},D_{1:M})=P(H_1)P(D_1|H_1)\prod_{m=2}^{M-1}P(H_m|H_{m-1})P(D_m|H_m),\]
-where the transition probabilities 
-\[P(H_m=\text{clust}|H_{m-1}=\text{not})=0.001, \]
-\[P(H_m=\text{not}|H_{m-1}=\text{clust})=0.1\]
-and starting probabilities $P(H_1=\text{clust})=0$, $P(H_1=\text{not})=1$.
-The distribution of distances $D$ given the states is assumed to be geometric, with the density of mutations within cluster assumed to be at least one mutation per 100 bases:
-\[ D_m|H_m=\text{clust} \sim \text{Geom}(p=0.01), \]
-\[ D_m|H_m=\text{not} \sim \text{Geom}(p=\frac{1}{\text{mean}(D)}).\]
-We used Viterbi algorithm to infer the most likely set of states for each sample.
 ```{r}
-isClustered <- function(vcf, p=1e-3, q=0.1, r=100){
-  d <-  diff(vcf$start)
-  w <- d > 1 & diff(as.numeric(vcf$seqnames)) == 0
-  #	p <- 1e-3 # P N>Kat
-  #	q <- 0.05 # P Kat>N
-  P <- matrix(c(1-p,p,q, 1-q), ncol=2, byrow=TRUE) # Transition probabilities matrix
-  p0 <- c(1,0)
-  s <- c(mean(d[w]), r)
-  dw <- d[w]
-  l <- length(dw)
-  T1 <- T2 <- matrix(0,ncol=l, nrow=2)
-  T1[,1] <- log(c(q/(q+p), p/(q+p))) # log of Vitterbi path probabilities
-  lP <- log(P)
-  dg <- rbind(dgeom(dw, prob=1/s[1], log=TRUE), dgeom(dw, prob=1/s[2], log=TRUE)) 
-  # state observation loglikelihood given the current state (none, kataegis)
-  
-  # Viterbi algorithm
-  
-  for(i in 2:l){
-    x <- ((T1[,i-1] + lP) + dg[,i])
-    T2[1,i] <- (x[1,1] < x[2,1])+1
-    T2[2,i] <- (x[1,2] < x[2,2])+1
-    T1[1,i] <- x[T2[1,i],1]
-    T1[2,i] <- x[T2[2,i],2]
-    #x <- T1[,i-1] + lP + rep(dg[,i],each=2) # previous Vitterbi path probability * transition probability * observation likelihood
-    #T1[,i] <- sapply(1:2, function(state) max(x[,state]))
-    #T2[,i] <- sapply(1:2,function(state) which.max(x[,state])) # most probable states - backpointer
-  }
-  finalT1 <- max(T1[,l] + log(c(q/(q+p), p/(q+p)))) # + probability of transition to final state, let's say 1 and then log(1)=0
-  finalT2 <- which.max(T1[,l] + log(c(q/(q+p), p/(q+p))))# + 
-  z <- numeric(l)
-  z[l] <- finalT2
-  z[l] <- 1 # this means that the backtrace starts from 1 (not necessarily)
-  for(i in l:2){
-    z[i-1] <- T2[z[i],i]
-  }
-  k <- numeric(nrow(vcf))
-  k[-1][w][-1] <- z[-l]-1
-  k[-nrow(vcf)][w][-1] <- (z[-l]-1) | k[-nrow(vcf)][w][-1]
-  
-  # Other clustered
-  pc <- pgeom(dw, prob=1/s[1], lower.tail=TRUE)
-  qc <- p.adjust(pc, "BH") < 0.05
-  
-  cl <- numeric(nrow(vcf))
-  cl[-1][w] <- qc
-  cl[-nrow(vcf)][w] <- qc | cl[-nrow(vcf)][w]
-  
-  clk <- factor(pmin(cl + 2*k,2), levels=0:2, labels=c("None","Clustered","Kataegis"))
-  return(clk)
+isClustered <- function(variant_table, window = 1000){
+  res <- rep(0, nrow(variant_table))
+  d_next <- c(diff(variant_table$start),window+1)
+  d_prev <- c(window+1, diff(variant_table$start))
+  res[ (d_next < 100 & c(diff(as.numeric(variant_table$seqnames)) == 0, FALSE)) |
+         (d_prev < 100 & c(FALSE, diff(as.numeric(variant_table$seqnames)) == 0)) ] <- 1
+  return(res)
 }
 ```
 
-Pretty names for genotypes
-```{r}
-print_names <- c('N2','agt-2','apn-1','exo-3',
-                 'ndx-4','parp-1','parp-2','tdpo-1',
-                 'ung-1','xpa-1','xpf-1','xpg-1',
-                 'xpc-1','csb-1','polh-1 (ok3317)',
-                 'polh-1 (lf31)','polk-1','rev-1 (gk147834)',
-                 'rev-1 (gk924750)','rev-3','fcd-2',
-                 'fnci-1','fncm-1','helq-1','dog-1',
-                 'fan-1','cku-80','lig-4','polq-1',
-                 'brc-1 brd-1','rip-1','smc-5','smc-6',
-                 'slx-1','mus-81','smg-1','rcq-5',
-                 'wrn-1','rtel-1','dna-2','bub-3 (gt2000)',
-                 'bub-3 (ok3437)','san-1','atm-1','cep-1',
-                 'ced-3','ced-4','brc-1 brd-1; ced-3',
-                 'brc-1 brd-1; cep-1','him-6','him-6 ced-3',
-                 'him-6; ced-4','him-6; cep-1','brd-1',
-                 'gen-1','lem-3','mlh-1','pms-2',
-                 'pole-4','pole-4; pms-2','rfs-1','rif-1')
-
-names(print_names) <- c(sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[1:7],
-                        "tdp-1",
-                        sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[9:15],
-                        "polh(lf31)-1",'polk-1',
-                        'rev(gk147834)-1',
-                        sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[19:29],
-                        "brc-1",
-                        sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[31:40],
-                        "bub(gt2000)-3","bub(ok3437)-3",
-                        sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[43:47],
-                        "brc-1,ced-3","brc-1,cep-1",
-                        "him-6","him-6,ced-3","him-6,ced-4","him-6,cep-1",
-                        sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[54:59],
-                        "pole-4,pms-2",sapply(print_names, function(x) unlist(strsplit(x,split = ' '))[1])[61:62])
-
-```
 
 Checking if a variant is an MNV
 ```{r}
@@ -188,23 +96,21 @@ isMNV <- function(vcf) {
 
 Start generating images
 ```{r}
+experiments <- split(data$Sample, data$Code)
 huge_tot <- list()  
 totcount <- 1
 q <- list()
 j <- 1
 clrs <- c("#2EBAED","#000000","#DE1C14","#D4D2D2","#ADCC54","#F0D0CE","brown","#8DD3C7","#FFFFB3","#BEBADA")
 names(clrs) <- c('C>A','C>G','C>T','T>A','T>C','T>G','DNV','D','DI','I')
-for (count in 1:length(print_names)) {
+for (gntp in unique(data$Genotype)) {
   
-  gntp <- names(print_names)[count]
+  inds <- names(experiments)[grep(gntp, names(experiments))]
   
-  if (names(print_names)[count] == "rad(TG3312)-54B")
-    gntp <- "rad-54B"
+  for (exp in inds) {
   
-  inds <- which(sapply(names(exps), function(x) unlist(strsplit(x,split = '[:]'))[1]) == gntp)
-  
-  for (samset in exps[inds]) {
-  
+    samset <- experiments[[exp]]
+    
     tot <- list()
     
     no.samples <- length(samset)
@@ -236,49 +142,59 @@ for (count in 1:length(print_names)) {
           subs$Type[subs$Type == 'G>C'] <- 'C>G'
           subs$Type[subs$Type == 'G>T'] <- 'C>A'
         }
+        if (nrow(subs) == 0) subs <- NULL
+        if (nrow(dnvs) == 0) dnvs <- NULL
       } else {
-        subs <- tmp_vcf_df
-        dnvs <- tmp_vcf_df
+        subs <- NULL #as.data.frame(granges(tmp_vcf))
+        dnvs <- NULL #as.data.frame(granges(tmp_vcf))
       }
+      
   
       vcf <- indels_dedup[[n]]
-      indels <- as.data.frame(granges(vcf))
-      if (nrow(indels) > 0) {
-        indels <- indels[indels$seqnames!='MtDNA',]
-        indels$Sample <- n
-        indels$VAF <- (geno(vcf)$PU[,"TUMOUR"] + geno(vcf)$NU[,"TUMOUR"]) / 
-          (geno(vcf)$PR[,"TUMOUR"] + geno(vcf)$NR[,"TUMOUR"]) 
-        indels$Type <- ifelse(nchar(indels$REF) > nchar(unlist(sapply(indels$ALT,as.character))), yes = 'D', no = 'I')
-        indels$Type[nchar(indels$REF) > 1 & nchar(unlist(sapply(indels$ALT,as.character))) > 1] <- 'DI'
-      }
-  
-      if (nrow(subs) > 0) {
+      if (length(vcf) >0) {
+        indels <- as.data.frame(granges(vcf))
         if (nrow(indels) > 0) {
-          if (nrow(dnvs) >0) tot[[n]] <- rbind(subs,indels,dnvs)
+          indels <- indels[indels$seqnames!='MtDNA',]
+          indels$Sample <- n
+          indels$VAF <- (geno(vcf)$PU[,"TUMOUR"] + geno(vcf)$NU[,"TUMOUR"]) / 
+            (geno(vcf)$PR[,"TUMOUR"] + geno(vcf)$NR[,"TUMOUR"]) 
+          indels$Type <- ifelse(nchar(indels$REF) > nchar(unlist(sapply(indels$ALT,as.character))), yes = 'D', no = 'I')
+          indels$Type[nchar(indels$REF) > 1 & nchar(unlist(sapply(indels$ALT,as.character))) > 1] <- 'DI'
+        } else indels <- NULL
+      } else indels <- NULL
+  
+      if (!is.null(subs)) {
+        if (!is.null(indels)) {
+          if (!is.null(dnvs)) tot[[n]] <- rbind(subs,indels,dnvs)
           else tot[[n]] <- rbind(subs,indels)
         } else {
-          if (nrow(dnvs) >0) tot[[n]] <- rbind(subs,dnvs)
+          if (!is.null(dnvs)) tot[[n]] <- rbind(subs,dnvs)
           else tot[[n]] <- subs
         }
       } else {
-        if (nrow(indels) > 0) {
-          if (nrow(dnvs) >0) tot[[n]] <- rbind(indels,dnvs)
+        if (!is.null(indels)) {
+          if (!is.null(dnvs)) tot[[n]] <- rbind(indels,dnvs)
           else tot[[n]] <- indels
         } else {
-          if (nrow(dnvs) >0) tot[[n]] <- rbind(dnvs)
+          if (!is.null(dnvs)) tot[[n]] <- rbind(dnvs)
           else tot[[n]] <- NULL
         }
       }
 
       if (length(tot[[n]])>0) {
         tot[[n]]$Mode <- NA
-        tot[[n]]$experiment <- CD2Mutant[n]
-        if (nrow(subs)>0) 
+        tot[[n]]$experiment <- data$Code[data$Sample == n]
+        if (!is.null(subs)) {
           tot[[n]]$Mode[1:nrow(subs)] <- 'A'
-        if (nrow(indels) >0)
-          tot[[n]]$Mode[(nrow(subs)+1):(nrow(subs) + nrow(indels))] <- 'B'
-        if (nrow(dnvs)>0)
-          tot[[n]]$Mode[(nrow(subs)+nrow(indels)+1):nrow(tot[[n]])] <- 'C'
+          nsubs <- nrow(subs)
+        } else nsubs <- 0
+        if (!is.null(indels)) {
+          tot[[n]]$Mode[(nsubs+1):(nsubs + nrow(indels))] <- 'B'
+          ninds <- nrow(indels)
+        } else ninds <- 0
+        if (!is.null(dnvs)) {
+          tot[[n]]$Mode[(nsubs+ninds+1):nrow(tot[[n]])] <- 'C'
+        }
         rownames(tot[[n]]) <- NULL
         tot[[n]] <- tot[[n]][order(tot[[n]]$seqnames),]
         for (ch in levels(tot[[n]]$seqnames)) {
@@ -288,49 +204,46 @@ for (count in 1:length(print_names)) {
           tot[[n]]$clust <- 2
         } else {
           k <- isClustered(tot[[n]])
-          tot[[n]]$clust <- as.character(k)
-          tot[[n]]$clust[tot[[n]]$clust == 'Kataegis'] <- 5
-          tot[[n]]$clust[tot[[n]]$clust != 5] <- 2
-          for (special_count in 1:nrow(tot[[n]])) {
-            
-          }
+          tot[[n]]$clust <- k*3 + 2
         }
       }
     }
     tot <- do.call('rbind', tot)
-    huge_tot[[totcount]] <- tot
-    totcount <- totcount + 1
+    huge_tot[[exp]] <- tot
+    
+    # remove duplicates for plotting
     for (lll in unique(tot$start)) {
       if (sum(tot$start == lll) == 1) next
       if (var(tot$VAF[tot$start == lll]) < 0.01 & length(unique(tot$Type[tot$start == lll])) == 1)
         tot <- tot[-which(tot$start == lll)[-1],]
     }  
-    
+
+    # plotting with clusters
     if (sum(tot$clust>2)>0)
       q[[j]] <- ggplot() + geom_bar(data = df, aes(x = name, y = length), stat = 'identity',fill = 'white') +
         scale_y_continuous(labels = c('0 Mb','5 Mb', '10 Mb','15 Mb','20 Mb')) +
         geom_jitter(data = tot, aes(x = seqnames, y = start, col = Type, shape =Mode, size = clust)) +
-        labs(title = paste0('Mutations across all samples from ',CD2Mutant[samset[1]], ' experiment, ',
+        labs(title = paste0('Mutations across all samples from ',data$Code[data$Sample == samset[1]], ' experiment, ',
                           no.samples, ' samples'),
              x = 'Chromosome',y='Position') +
         scale_shape_discrete(labels = c('Substitutions','Indels','DNVs')) +
         scale_size_manual(values = c(2,5), labels = c('single','clustered')) +
         scale_color_manual(values=clrs[unique(tot$Type)]) +
-      guides(size=guide_legend(title="Clustering"), shape = guide_legend(title='Class')) + 
+      guides(size=guide_legend(title="Clustering"), shape = guide_legend(title='Class')) +
         theme(title = element_text(size=10))
-    else
+    else # plotting without clusters
       q[[j]] <- ggplot() + geom_bar(data = df, aes(x = name, y = length), stat = 'identity',fill = 'white') +
       scale_y_continuous(labels = c('0 Mb','5 Mb', '10 Mb','15 Mb','20 Mb')) +
       geom_jitter(data = tot, aes(x = seqnames, y = start, col = Type, shape = Mode), size = 2) +
-      labs(title = paste0('Mutations across all samples from ',CD2Mutant[samset[1]], ' experiment, ',
+      labs(title = paste0('Mutations across all samples from ',data$Code[data$Sample == samset[1]], ' experiment, ',
                           no.samples, ' samples'),
            x = 'Chromosome',y='Position') +
       scale_shape_discrete(labels = c('Substitutions','Indels','DNVs')) +
       scale_color_manual(values=clrs[unique(tot$Type)]) +
-      guides(shape = guide_legend(title='Class')) + 
+      guides(shape = guide_legend(title='Class')) +
       theme(title = element_text(size=10))
-   
-    
+
+    # plotting SVs
     COLOR=c("#FBB4AE","#B3CDE3","#CCEBC5","#DECBE4","#FED9A6","#FFFFCC","#E5D8BD")
     names(COLOR) = c("TD", "DEL", "INV", "COMPLEX", "FOLDBACK", "MOVE", "TRSL")
     svs <- svmat[as.character(svmat$Sample) %in% samset,]
@@ -341,16 +254,16 @@ for (count in 1:length(print_names)) {
 
     if (nrow(svs)>0) {
         q[[j]] <- q[[j]] + geom_rect(data = svs,
-                                     mapping = aes(xmin = CHR1-0.5, 
-                                                   xmax = CHR1+0.5, 
-                                                   ymin = POS1, 
+                                     mapping = aes(xmin = CHR1-0.5,
+                                                   xmax = CHR1+0.5,
+                                                   ymin = POS1,
                                                    ymax = POS2+10000,
                                                    fill = clust.type),
                                      alpha = 0.4) +
-        scale_fill_manual(values = COLOR) + 
+        scale_fill_manual(values = COLOR) +
           guides(fill = guide_legend(title='SV'))
     }
-  
+
     j = j+1
     print(j)
   }
@@ -362,8 +275,9 @@ Save them all
 GG_save_pdf(q, filename = 'Mutation_accumulation_location_plots.pdf', 8,7)
 ```
 
-Generate the barplots of mutation types per sample
+Read in mutation counts and generate barplots of mutation types per sample (no counts for reference sample, CD0001b):
 ```{r}
+Y <- read.csv('data/MA_mutation_counts.csv', row.names = 1)
 short.Y <- cbind(rowSums(Y[,1:16]),rowSums(Y[,17:32]),rowSums(Y[,33:48]),rowSums(Y[,49:64]),
                  rowSums(Y[,65:80]),rowSums(Y[,81:96]), rowSums(Y[,97:98]), rowSums(Y[,99:104]),
                  rowSums(Y[,105:106]), rowSums(Y[,107:112]),rowSums(Y[,113:119]))
@@ -372,40 +286,40 @@ short.Y <- cbind(rowSums(Y[,1:16]),rowSums(Y[,17:32]),rowSums(Y[,33:48]),rowSums
 BER and NER baplot
 ```{r}
 pdf('Figure_3b.pdf',10,6)
-f <- barplot(t(rbind(short.Y[names(CD2Mutant)[CD2Mutant== 'N2:0'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'N2:20'],],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'N2:40'],],
+f <- barplot(t(rbind(short.Y[data$Sample[data$Code== 'N2:0'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'N2:20'],],
+                     short.Y[data$Sample[data$Code== 'N2:40'],],
                      NA,
                      NA,
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'agt-2:0'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'agt-2:20'],],
+                     short.Y[data$Sample[data$Code== 'agt-2:0'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'agt-2:20'],],
                      NA,
                      NA,
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'ung-1:0'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'ung-1:20'],],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'ung-1:40'],],
+                     short.Y[data$Sample[data$Code== 'ung-1:0'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'ung-1:20'],],
+                     short.Y[data$Sample[data$Code== 'ung-1:40'],],
                      NA,
                      NA,
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpa-1:0'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpa-1:20'],],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpa-1:40'],],
+                     short.Y[data$Sample[data$Code== 'xpa-1:0'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'xpa-1:20'],],
+                     short.Y[data$Sample[data$Code== 'xpa-1:40'],],
                      NA,
                      NA,
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpf-1:0'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpf-1:20'],],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpf-1:40'],],
+                     short.Y[data$Sample[data$Code== 'xpf-1:0'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'xpf-1:20'],],
+                     short.Y[data$Sample[data$Code== 'xpf-1:40'],],
                      NA,
                      NA,
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpg-1:1'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpg-1:20'],],
+                     short.Y[data$Sample[data$Code== 'xpg-1:1'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'xpg-1:20'],],
                      NA,
                      NA,
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpc-1:0'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'xpc-1:20'],],
+                     short.Y[data$Sample[data$Code== 'xpc-1:0'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'xpc-1:20'],],
                      NA,
                      NA,
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'csb-1:0'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'csb-1:20'],])),
+                     short.Y[data$Sample[data$Code== 'csb-1:0'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'csb-1:20'],])),
              col = c("#2EBAED","#000000","#DE1C14","#D4D2D2","#ADCC54","#F0D0CE",
                      "brown","#8DD3C7","#FFFFB3","#BEBADA","darkmagenta"),
              xaxt = 'n', las = 2, border = NA, ylim = c(-2,50))
@@ -431,28 +345,28 @@ dev.off()
 BRCA
 ```{r}
 pdf('brca_barplots.pdf',10,6)
-f <- barplot(t(rbind(short.Y[names(CD2Mutant)[CD2Mutant== 'ced-3:1'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'ced-3:20'],],
+f <- barplot(t(rbind(short.Y[data$Sample[data$Code== 'ced-3:1'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'ced-3:20'],],
                      NA,
                      NA,
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'cep-1:0'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'cep-1:1'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'cep-1:20'],],
+                     short.Y[data$Sample[data$Code== 'cep-1:0'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'cep-1:1'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'cep-1:20'],],
                      NA,
                      NA,
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1:0'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1:1'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1:20'],],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1:40'],],
+                     short.Y[data$Sample[data$Code== 'brc-1 brd-1*:0'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'brc-1 brd-1*:1'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'brc-1 brd-1*:20'],],
+                     short.Y[data$Sample[data$Code== 'brc-1 brd-1*:40'],],
                      NA,
                      NA,
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,ced-3:0'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,ced-3:1'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,ced-3:20'],],
+                     short.Y[data$Sample[data$Code== 'brc-1 brd-1*;ced-3:0'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'brc-1 brd-1*;ced-3:1'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'brc-1 brd-1*;ced-3:20'],],
                      NA,
                      NA,
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,cep-1:10'],,drop = F],
-                     short.Y[names(CD2Mutant)[CD2Mutant== 'brc-1,cep-1:20'],])), 
+                     short.Y[data$Sample[data$Code== 'brc-1 brd-1*; cep-1:10'],,drop = F],
+                     short.Y[data$Sample[data$Code== 'brc-1 brd-1*; cep-1:20'],])), 
              col = c("#2EBAED","#000000","#DE1C14","#D4D2D2","#ADCC54","#F0D0CE",
                      "brown","#8DD3C7","#FFFFB3","#BEBADA","darkmagenta"),
              xaxt = 'n', las = 2, border = NA, ylim = c(-1,60))
@@ -474,194 +388,76 @@ dev.off()
 
 Aggregate all clusters
 ```{r}
-allclust <- do.call('rbind',huge_tot)
-allclust <- allclust[allclust$clust>1,]
-
-CD2Mutant.reduced <- sapply(CD2Mutant, function(x) {
-  tmp <- unlist(strsplit(x, split = '[:]'))
-  if (length(tmp) == 2) return(x)
-  else return(paste(tmp[1:3],collapse=':'))
-})
+allmuts <- do.call('rbind',huge_tot)
+allclust <- allmuts[allmuts$clust>2,]
 
 clustdf <- data.frame(name = unique(allclust$Sample))
 clustdf$name <- as.character(clustdf$name)
 clustdf$generation <- data$Generation[match(clustdf$name,data$Sample)]
-clustdf$genotype <- data$Genotype.new[match(clustdf$name,data$Sample)]
-clustdf$exposure <- data$Mutagen[match(clustdf$name,data$Sample)]
-clustdf$dose <- data$Drug.concentration[match(clustdf$name,data$Sample)]
-clustdf$code <- CD2Mutant.reduced[match(clustdf$name,names(CD2Mutant.reduced))]
+clustdf$genotype <- data$Genotype[match(clustdf$name,data$Sample)]
+clustdf$code <- data$Code[match(clustdf$name,data$Sample)]
 
 clustdf$number_of_clusters <- sapply(clustdf$name, function(x) 
-    sum(abs(diff(allclust$start[allclust$Sample == x]))>1000) + 1)
+    sum(abs(diff(allclust$start[allclust$Sample == x]))>100) + 1)
 clustdf$number_clust_muts <- sapply(clustdf$name, function(x) sum(allclust$Sample == x))
-clustdf$total_samples_of_this_code <- sapply(clustdf$code, function(x) sum(CD2Mutant.reduced == x))
-clustdf$total_mutations_in_sample <- sapply(clustdf$name, function(x) sum(Y[x,1:112]))
+clustdf$total_samples_of_this_code <- sapply(clustdf$code, function(x) sum(data$Code == x))
+clustdf$total_mutations_in_sample <- sapply(clustdf$name, function(x) sum(allmuts$Sample == x))
+clustdf$prop.of.clust <- clustdf$number_clust_muts / clustdf$total_mutations_in_sample
 ```
 
-Model the number of clusters as a Poisson random variable
+Calculate clustering rates in genotypes with more than 3 samples of generation higher than 1, and compare to wild-type:
+
 ```{r}
-clustdf$total_number_of_mutations <- rowSums(Y)[match(clustdf$name, rownames(Y))]
 
-clust <- sapply(rownames(count.data), function(x) {
-  if (x %in% clustdf$name) return(clustdf$number_of_clusters[clustdf$name == x])
-  else return(0)
+df <- data.frame(sapply(sort(unique(data$Genotype)), function(x) 
+  as.numeric(data$Genotype == x)))
+rownames(df) <- data$Sample
+df$prop_clust <- sapply(data$Sample, function(x) {
+    if (x %in% clustdf$name) return(clustdf$prop.of.clust[clustdf$name == x])
+    return(0)
 })
+df <- df[data$Generation>1,]
+df <- df[,colSums(df>0)>2]
 
-cd <- count.data[,!(colnames(count.data) %in% c('trt-1','pot-2','mrt-2'))]
-cd <- cd[rowSums(cd)>0,]
-m <- ncol(cd)
+model <- glm(prop_clust ~ 0 + ., data = df)
 
-sigma <- variable(lower = 0)
-rates <-  lognormal(meanlog = 0, sdlog = sigma, dim = c(1, m))
-mu = (cd %*% t(rates))
-clust <- t(t(clust))
-distribution(clust) = poisson(lambda = mu)
-cl.model <- model(rates,sigma)
-cl.draws <- mcmc(cl.model, warmup = 500, n_samples = 500) # do on cluster
-draws_all <- do.call('rbind',cl.draws)
-rates <- colMeans(draws_all[,1:74])
-rates.sd <- apply(draws_all[,1:74],2,sd)
-names(rates) = names(rates.sd) <- colnames(cd)
-
-rates <- rates[-c(8,9,32:34,73)]
-rates.sd <- rates.sd[-c(8,9,32:34,73)]
+summary(model)
+coeffs <- coef(summary(model))
 
 pvclust <- NULL
-for (zzz in names(rates)[-1]) {
-  stat_mu = rates[zzz] - rates['N2']
-  stat_sd = sqrt(rates.sd[zzz]**2 + rates.sd['N2']**2)
+for (zzz in rownames(coeffs)[-match('N2',rownames(coeffs))]) {
+  stat_mu = coeffs[zzz,1] - coeffs['N2',1]
+  stat_sd = sqrt(coeffs[zzz,2]**2 + coeffs['N2',2]**2)
   zscore = stat_mu / stat_sd
-  pvclust <- c(pvclust, 1 - pchisq(q = zscore**2, df = 1))
+  pvclust <- c(pvclust, 1 - pnorm(q = zscore))
 }
-which(p.adjust(pvclust,method='BH') < 0.05)
-```
-
-Analyze proportions of clustered mutations
-```{r}
-prop.of.clust <- sapply(names(clust), function(x) {
-  if (x %in% clust_summary$name) return(clust_summary$number_clust_muts[clust_summary$name == x] / sum(Y[x,c(1:112)]))
-  else return(0)
-})
-
-#save(cd, clust, prop.of.clust, file = '~/yoda2/IR/IRclust_new.RData')
-
-simplemodel <- glm( prop.of.clust ~ 0 + .,data = cd1, family = gaussian())
-coef(summary(simplemodel))
-which(p.adjust(coef(summary(simplemodel))[,4], method = 'BH')<0.05)
-
-coeffs <- coef(summary(simplemodel))
-
-pvclust <- NULL
-for (zzz in rownames(coeffs)[-1]) {
-  stat_mu = coeffs[zzz,1] - coeffs['N2.Rad',1]
-  stat_sd = sqrt(coeffs[zzz,2]**2 + coeffs['N2.Rad',2]**2)
-  zscore = stat_mu / stat_sd
-  pvclust <- c(pvclust, 1 - pchisq(q = zscore**2, df = 1))
-}
-rownames(coeffs)[-1][which(p.adjust(pvclust,method='BH') < 0.05)]
-```
-
-```{r}
-prop.of.clust <- sapply(rownames(cd), function(x) {
-  if (x %in% clustdf$name) return(clustdf$number_of_clustered_mutations[clustdf$name == x] / sum(Y[x,c(1:112)]))
-  else return(0)
-})
-
-sigma <- variable(lower = 0)
-sigma2 <- variable(lower = 0)
-prop.rates <-  lognormal(meanlog = 0, sdlog = sigma, dim = c(1, m))
-cd1 <- cd / rowSums(cd)
-mu = (cd1 %*% t(prop.rates))
-prop.of.clust <- t(t(prop.of.clust))
-distribution(prop.of.clust) = normal(mean = mu, sd = sigma2)
-prop.model <- model(prop.rates,sigma,sigma2)
-prop.draws <- mcmc(prop.model, warmup = 500, n_samples = 500) # do on cluster
-draws_all <- do.call('rbind',prop.draws)
-prop.rates <- colMeans(draws_all[,1:74])
-prop.rates.sd <- apply(draws_all[,1:74],2,sd)
-names(prop.rates) = names(prop.rates.sd) <- colnames(cd)
-
-prop.rates <- prop.rates[-c(8,9,32:34,73)]
-prop.rates.sd <- prop.rates.sd[-c(8,9,32:34,73)]
-
-pvprop <- NULL
-for (zzz in names(prop.rates)[-1]) {
-  stat_mu = prop.rates[zzz] - prop.rates['N2']
-  stat_sd = sqrt(prop.rates.sd[zzz]**2 + prop.rates.sd['N2']**2)
-  zscore = stat_mu / stat_sd
-  pvprop <- c(pvprop, 1 - pchisq(q = zscore**2, df = 1))
-}
-which(p.adjust(pvprop,method='BH') < 0.05)
-# him.6, rip.1, brc.1, agt.2, rfs.1, brc.1.cep.1, mus.81.cep.1
-
+rownames(coeffs)[-match('N2',rownames(coeffs))][which(p.adjust(pvclust,method='BH') < 0.05)]
+names(pvclust) <- rownames(coeffs)[-match('N2',rownames(coeffs))]
+pvprop <- p.adjust(pvclust,method='BH')
 ```
 
 # Visualize
 ```{r}
-pdf('~/Cluster_comparison.pdf',16,10)
-par(mar = c(2,8,6,2), mfrow = c(1,2))
-o <- order(rates)
-f <- barplot(rates[o], col = c('white','darkred')[c(1,as.numeric(p.adjust(pvclust,method='BH') < 0.05)+1)][o],
-             xaxt = 'n', las = 2, ylab = '', cex.axis = 0.7, yaxt = 'n',
-             main = 'Number of clusters per generation', xlim  = c(0,0.5), horiz = T)
-points(x = clust[,1] / data$Generation[match(rownames(clust),data$Sample)] + rnorm(nrow(clust),mean=0.01,sd = 0.0001),
-       y = f[match(sapply(rownames(clust), function(x) colnames(cd)[cd[x,]>0]), names(rates)[o]),1],
-       pch = 16, col = 'gray10', cex = 0.5)
-arrows(y0 = f, x0 = rates[o] - 1.96*rates.sd[o], x1 = rates[o] + 1.96*rates.sd[o], length = 0, col = 'gray21', lwd = 0.5)
-axis(side=2, at = f, labels = print_names[sapply(names(rates)[o], function(x) grep(x,names(print_names))[1])],
-     cex.axis = 0.7, las = 2, font = 3)
-axis(side = 3, at = c(0,0.1,0.2,0.3,0.4,0.5), labels = c(0.0,0.1,0.2,0.3,0.4,0.5), cex.axis = 0.7)
-abline(v = rates['N2'], lty = 2)
-
-o <- order(prop.rates)
-f <- barplot(prop.rates[o], col = c('white','darkred')[c(1,as.numeric(p.adjust(pvprop,method='BH') < 0.05)+1)][o],
-             xaxt = 'n', las = 2, ylab = '', cex.axis = 0.7, yaxt = 'n',
-             main = 'Proportion of clustered mutations', xlim  = c(0,1), horiz = T)
-points(x = prop.of.clust[,1] + rnorm(nrow(prop.of.clust),mean=0.01,sd = 0.0001),
-       y = f[match(sapply(rownames(prop.of.clust), function(x) colnames(cd1)[cd1[x,]>0]), names(prop.rates)[o]),1],
-       pch = 16, col = 'gray10', cex = 0.5)
-arrows(y0 = f, x0 = prop.rates[o] - 1.96*prop.rates.sd[o], x1 = prop.rates[o] + 1.96*prop.rates.sd[o], length = 0,
-       col = 'gray21', lwd = 0.5)
-axis(side=2, at = f, labels = print_names[sapply(names(prop.rates)[o], function(x) grep(x,names(print_names))[1])],
-     cex.axis = 0.7, las = 2, font = 3)
-axis(side = 3, at = c(0:10)*0.1, labels = c(0:10)*0.1, cex.axis = 0.7)
-abline(v = prop.rates['N2'], lty = 2)
-legend('bottomright', legend = 'significantly different from N2 (FDR 5%)', fill = 'darkred',bty = 'n',
-       border = NA)
-dev.off()
-
-
-pdf('~/Cluster_comparison_main.pdf',10,6)
+pvprop <- c(pvprop[c(1:31)],1,pvprop[c(32:59)]) # insert N2 for simplicity
+pdf('~/Cluster_comparison.pdf',6,6)
 set.seed(123)
-par(mfrow = c(1,2))
-boxplot(rates, frame = F, outline = F, ylim = c(0,max(rates+1.96*rates.sd)),
-        ylab = 'No. of clusters per generation', main = 'Clusters across genotypes')
-#newx <- jitter(rep(1, length(rates)), amount = 0.1)
-points(x = newx, y = rates, col = 'gray', pch = 16) 
-o <- which(p.adjust(pvclust,method='BH') < 0.1)
-points(x = newx[o+1], y = rates[o+1], col = 'darkred', pch = 16) 
-arrows(x0 = newx[o+1],y0 = rates[o+1] - 1.96*rates.sd[o+1],y1=rates[o+1]+1.96*rates.sd[o+1],
-       col = 'gray21',lwd=0.5,length=0)
-abline(h = rates['N2'], lty = 2)
-text(x = c(newx[o+1][1] - 0.2, newx[o+1][-1] + 0.2), y = rates[o+1], font = 3,
-     labels = print_names[sapply(names(rates)[o+1], function(x) grep(x,names(print_names))[1])], cex = 0.7)
-
-boxplot(prop.rates, frame = F, outline = F, ylim = c(0,max(prop.rates+1.96*prop.rates.sd)),
+boxplot(coeffs[,1], frame = F, outline = F, ylim = c(0,max(coeffs[,1]+1.96*coeffs[,2])),
         ylab = 'Prop. of clustered mut-s', main = 'Proportion of clustered mutations\n across genotypes')
-#newx2 <- jitter(rep(1, length(prop.rates)), amount = 0.1)
-points(x = newx2, y = prop.rates, col = 'gray', pch = 16) 
-o2 <- which(p.adjust(pvprop,method='BH') < 0.1)
-points(x = newx2[o2+1], y = prop.rates[o2+1], col = 'darkred', pch = 16) 
-arrows(x0 = newx2[o2+1],y0 = prop.rates[o2+1] - 1.96*prop.rates.sd[o2+1],
-       y1=prop.rates[o2+1]+1.96*prop.rates.sd[o2+1],
+#newx2 <- jitter(rep(1, length(coeffs[,1])), amount = 0.1)
+points(x = newx2, y = coeffs[,1], col = 'gray', pch = 16) 
+o2 <- which(pvprop < 0.05)
+points(x = newx2[o2], y = coeffs[o2,1], col = 'darkred', pch = 16) 
+arrows(x0 = newx2[o2],y0 = coeffs[o2,1] - 1.96*coeffs[o2,2],
+       y1=coeffs[o2,1]+1.96*coeffs[o2,2],
        col = 'gray21',lwd=0.5,length=0)
-abline(h = prop.rates['N2'], lty = 2)
-text(x = c(newx2[o2+1][1] - 0.2, newx2[o2+1][c(2:3)] + 0.22,newx2[o2+1][4] - 0.2,newx2[o2+1][5] - 0.25,newx2[o2+1][6:7] - 0.2),
-     y = prop.rates[o2+1], font = 3,
-     labels = print_names[sapply(names(prop.rates)[o2+1], function(x) grep(x,names(print_names))[1])],
+abline(h = coeffs['N2',1], lty = 2)
+text(x = c(newx2[o2][1] - 0.1, newx2[o2][2] + 0.15, newx2[o2][3] + 0.13,newx2[o2][4] - 0.07,newx2[o2][5] - 0.05,newx2[o2][6] - 0.1),
+     y = c(coeffs[o2,1][1:4], coeffs[o2,1][5]-0.01,coeffs[o2,1][6]+0.01), font = 3,
+     labels = sapply(rownames(coeffs)[o2], function(x) data$Genotype[data$Sample == rownames(df)[df[,x]>0][1]]),
      cex = 0.7)
-legend('topright', legend = 'significantly different\n from N2 (FDR 5%)', fill = 'darkred',bty = 'n',
-       border = NA, cex = 0.7)
+legend('topright', legend = 'significantly different\n from N2 (FDR 5%)', 
+       col = 'darkred', bty = 'n', pch = 16, 
+       border = NA)
 dev.off()
 ```
 
