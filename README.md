@@ -8,7 +8,7 @@ The manuscript is currently under preparation. For any questions or suggestions,
 
 Script structure:
 
-`Location_plots.Rmd` (and `Location_plots.nb.html`) - contain the plotting of mutation distributions across the genome in multiple samples and clustering analysis. Requires samples annotation table, lists of VCFs for base substitutions and indels, as well as a table of structural variants.
+`Location_plots.Rmd` - contains the plotting of mutation distributions across the genome in multiple samples and clustering analysis. Requires samples annotation table, lists of VCFs for base substitutions and indels, as well as a table of structural variants.
 
 `Mutation_rate_estimation_final.R`	- codes for estimation of mutation rates and mutational signatures, analysis of differences to wild-type, and figure plotting. Requires a matrix with mutation counts and sample annotation table.
 
