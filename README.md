@@ -2,7 +2,7 @@ Codes and supplementary materials for the coming manuscript on mutation accumula
 
 B. Meier, N. Volkova, Y Hong, S Bertolini, B Wang, V Gonzalez-Huici, S Boulton, PJ Campbell, M Gerstung and A Gartner
 
-"Systematic analysis of mutational spectra associated with DNA repair deficiency in *C. elegans*"
+"Protection of the *C. elegans* germ cell genome depends on diverse DNA repair pathways during normal proliferation"
  
 The manuscript is currently under preparation. For any questions or suggestions, please contact me via volk1189@gmail.com.
 
