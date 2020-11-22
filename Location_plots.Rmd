@@ -17,7 +17,7 @@ library(openxlsx)
 
 Read sample annotation
 ```{r}
-data <- read.xlsx("data/MA_paper_supplementary_table_1.xlsx", sheet = 2)
+data <- read.xlsx("path/to/MA_paper_supplementary_table_1.xlsx", sheet = 2)
 data$Sample <- as.character(data$Sample)
 data$Genotype <- as.character(data$Genotype)
 data$Code <- paste0(data$Genotype,':', data$Generation, sep = '')
